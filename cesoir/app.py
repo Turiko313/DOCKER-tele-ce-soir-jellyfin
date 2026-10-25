@@ -13,6 +13,7 @@ from .guide import GuideCache
 from .jellyfin import Jellyfin
 from .matching import Matcher
 from .locking import instance_lock
+from . import __version__
 
 LOG = logging.getLogger(__name__)
 
@@ -89,6 +90,7 @@ def main() -> int:
         return 1
     if args.healthcheck:
         return healthcheck(config)
+    LOG.info("Films à la télé ce soir — version %s", __version__)
     stop = threading.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda *_: stop.set())
@@ -103,7 +105,8 @@ def main() -> int:
                     # Redact the secret even for unexpected exception messages.
                     message = str(error).replace(config.api_key, "[clé masquée]")
                     LOG.error("%s : %s", type(error).__name__, message)
-                    LOG.error("La dernière sélection confirmée est conservée si la lecture du guide ou de la médiathèque a échoué.")
+                    if not args.once and not args.dry_run:
+                        LOG.info("Nouvelle tentative automatique dans %d seconde(s).", config.interval_seconds)
                 if not args.dry_run:
                     atomic_json(config.data_dir / "health.json", {"ok": success, "checked_at": datetime.now(timezone.utc).timestamp()})
                 if args.once or args.dry_run:

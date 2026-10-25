@@ -102,12 +102,12 @@ ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:latest
 | Étiquette | Contenu |
 | --- | --- |
 | `latest` | Dernière version stable publiée. |
-| `1.0.1` | Version précise, à utiliser pour figer une installation. |
+| `1.0.2` | Version précise, à utiliser pour figer une installation. |
 | `1.0`, `1` | Dernière version publiée dans cette branche de versions. |
 | `edge` | Dernier commit de `main` ayant passé les tests. |
 | `sha-…` | Image associée à un commit précis. |
 
-Pour figer une version, indique par exemple `CESOIR_VERSION=1.0.1` dans `.env`. Pour appliquer une nouvelle image :
+Pour figer une version, indique par exemple `CESOIR_VERSION=1.0.2` dans `.env`. Pour appliquer une nouvelle image :
 
 ```sh
 docker compose pull
@@ -160,7 +160,7 @@ Remplace l'identifiant d'exemple par celui de ton film, visible dans l'adresse d
 
 L'extension gère uniquement les **liens vers des films dans sa collection**. Elle ne supprime pas de vidéos et ne modifie pas les titres, résumés ou affiches des films.
 
-La collection est partagée au niveau du serveur. Jellyfin applique les droits et restrictions de chaque utilisateur ; l'extension ne gère pas de sélection personnelle par compte.
+La collection est partagée au niveau du serveur : une seule instance de l'extension suffit pour tous les profils. Chaque profil doit avoir accès à la bibliothèque Collections et aux films concernés. Jellyfin applique les droits et restrictions de chaque utilisateur ; l'extension ne gère pas de sélection personnelle par compte.
 
 Si la lecture du guide ou de la médiathèque échoue, la sélection précédente est conservée. Elle peut donc correspondre à une ancienne soirée pendant une panne. Le cache ne sert que s'il couvre encore la soirée et reste assez récent. Si un guide valide couvre la soirée mais qu'aucun film ne correspond, la collection existante est vidée de ses liens.
 
@@ -218,18 +218,18 @@ Le workflow [Tests, Docker et versions](.github/workflows/docker.yml) :
 
 Les pull requests exécutent les tests sans publier d'image. La publication utilise le `GITHUB_TOKEN` temporaire de GitHub Actions ; aucun secret personnel du NAS n'est nécessaire.
 
-Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.0.2` :
+Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.0.3` :
 
 ```sh
-git tag -a v1.0.2 -m "Version 1.0.2"
-git push origin main v1.0.2
+git tag -a v1.0.3 -m "Version 1.0.3"
+git push origin main v1.0.3
 ```
 
 ## Validation et limites
 
-31 tests automatiques couvrent notamment la synchronisation sans doublons, les homonymes, les remakes, la pagination, les pannes, le cache, les horaires, l'authentification et la simulation. La lecture du guide TNT réel du 25 octobre 2026 a également été vérifiée.
+Les tests automatiques couvrent notamment la synchronisation sans doublons, les homonymes, les remakes, la pagination, les pannes, le cache, les horaires, l'authentification et la simulation. La lecture du guide TNT réel du 25 octobre 2026 a également été vérifiée.
 
-Les échanges de synchronisation sont testés avec un serveur Jellyfin simulé et les routes ont été vérifiées dans le code officiel. La validation finale sur ton propre serveur et ton application TV reste à faire après configuration.
+Les échanges de synchronisation sont testés avec un serveur simulé. Le défaut de lecture des collections avec une clé API a aussi été reproduit et corrigé sur un serveur Jellyfin 12.3.0 local, avec des films factices et deux profils. La validation finale sur ton propre serveur et ton application TV reste à faire après configuration.
 
 Sources techniques : [API des collections](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/CollectionController.cs), [API des éléments](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/ItemsController.cs), [format XMLTV](https://github.com/XMLTV/xmltv/blob/master/xmltv.dtd).
 

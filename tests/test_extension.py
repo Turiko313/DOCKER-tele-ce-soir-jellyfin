@@ -218,6 +218,13 @@ class FakeServer:
         self.fail_add = False
         self.bad_page = False
         self.redirect = False
+        self.collapse_collection_items = False
+        self.collapse_library_items = False
+        self.ignore_add = False
+        self.ignore_remove = False
+        self.delay_add_reads = 0
+        self.pending_additions = []
+        self.pending_reads = 0
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -251,11 +258,27 @@ class FakeServer:
                     if "ids" in query:
                         items = [dict(Id=k, Name=v["name"], Type="BoxSet") for k, v in owner.collections.items() if k in query["ids"].split(",")]
                     elif "parentid" in query:
-                        items = [{"Id": i, "Type": "Movie"} for i in owner.collections[query["parentid"]]["items"]]
+                        collection = owner.collections[query["parentid"]]
+                        if owner.pending_additions:
+                            if owner.pending_reads:
+                                owner.pending_reads -= 1
+                            else:
+                                collection["items"].extend(i for i in owner.pending_additions if i not in collection["items"])
+                                owner.pending_additions = []
+                        if query.get("recursive") != "true" and not query.get("userid"):
+                            # Reproduce Jellyfin's API-key / linked-child behaviour.
+                            items = []
+                        elif owner.collapse_collection_items and query.get("collapseboxsetitems") != "false":
+                            items = [{"Id": query["parentid"], "Type": "BoxSet"}]
+                        else:
+                            items = [{"Id": i, "Type": "Movie"} for i in collection["items"]]
                     elif query.get("includeitemtypes") == "BoxSet":
                         items = [dict(Id=k, Name=v["name"], Type="BoxSet") for k, v in owner.collections.items()]
                     else:
-                        items = owner.movies
+                        if owner.collapse_library_items and query.get("collapseboxsetitems") != "false" and owner.collections:
+                            items = [{"Id": k, "Name": v["name"], "Type": "BoxSet"} for k, v in owner.collections.items()]
+                        else:
+                            items = owner.movies
                     total = len(items)
                     offset, limit = int(query.get("startindex", 0)), int(query.get("limit", 200))
                     self.respond(200, {"Items": [] if owner.bad_page else items[offset:offset + limit], "TotalRecordCount": total})
@@ -271,8 +294,14 @@ class FakeServer:
                     ids = query["ids"].split(",")
                     current = owner.collections[C]["items"]
                     if self.command == "POST":
-                        current.extend(i for i in ids if i not in current)
-                    else:
+                        if owner.ignore_add:
+                            pass
+                        elif owner.delay_add_reads:
+                            owner.pending_additions.extend(ids)
+                            owner.pending_reads = owner.delay_add_reads
+                        else:
+                            current.extend(i for i in ids if i not in current)
+                    elif not owner.ignore_remove:
                         owner.collections[C]["items"] = [i for i in current if i not in ids]
                     self.respond(204)
                 else:
@@ -351,6 +380,50 @@ class IntegrationTests(unittest.TestCase):
             run_once(self.cfg, now=NOW)
         self.assertEqual(self.server.collections[C]["items"], [B])
         self.assertTrue(all(method != "DELETE" for method, _ in self.server.mutations))
+
+    def test_api_key_linked_children_are_read_recursively(self):
+        self.owned_collection([A])
+        self.assertEqual(Jellyfin(self.cfg).items(ParentId=C, Recursive="false"), [])
+        with self.feed():
+            report = run_once(self.cfg, now=NOW)
+        self.assertEqual(report["collection_movie_count"], 1)
+        self.assertFalse(self.server.mutations)
+
+    def test_collection_members_are_not_hidden_behind_a_boxset(self):
+        self.owned_collection([A])
+        self.server.collapse_collection_items = True
+        with self.feed():
+            run_once(self.cfg, now=NOW)
+        self.assertEqual(self.server.collections[C]["items"], [A])
+        self.assertFalse(self.server.mutations)
+
+    def test_library_movies_remain_visible_after_collection_creation(self):
+        self.owned_collection([A])
+        self.server.collapse_library_items = True
+        self.assertEqual([m["Id"] for m in Jellyfin(self.cfg).movies()], [A])
+
+    def test_unconfirmed_add_keeps_previous_selection(self):
+        self.owned_collection([B])
+        self.server.ignore_add = True
+        with self.feed(), patch("cesoir.jellyfin.time.sleep"), self.assertRaisesRegex(ExtensionError, "1 manquant"):
+            run_once(self.cfg, now=NOW)
+        self.assertEqual(self.server.collections[C]["items"], [B])
+        self.assertTrue(all(method != "DELETE" for method, _ in self.server.mutations))
+
+    def test_delayed_add_is_confirmed_before_removing_previous_films(self):
+        self.owned_collection([B])
+        self.server.delay_add_reads = 2
+        with self.feed(), patch("cesoir.jellyfin.time.sleep"):
+            run_once(self.cfg, now=NOW)
+        self.assertEqual(self.server.collections[C]["items"], [A])
+        self.assertEqual(self.server.mutations[-1], ("DELETE", f"/Collections/{C}/Items"))
+
+    def test_unconfirmed_removal_reports_actual_difference(self):
+        self.owned_collection([A, B])
+        self.server.ignore_remove = True
+        with self.feed(), patch("cesoir.jellyfin.time.sleep"), self.assertRaisesRegex(ExtensionError, "0 manquant.*1 inattendu"):
+            run_once(self.cfg, now=NOW)
+        self.assertEqual(set(self.server.collections[C]["items"]), {A, B})
 
     def test_incomplete_library_or_missing_guide_never_clears(self):
         self.owned_collection([B])

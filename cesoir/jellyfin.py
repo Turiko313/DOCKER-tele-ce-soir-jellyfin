@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -76,7 +77,7 @@ class Jellyfin:
         raise ExtensionError("La pagination Jellyfin a dépassé la limite de sécurité.")
 
     def movies(self) -> list[dict]:
-        movies = self.items(IncludeItemTypes="Movie", Recursive="true", IsPlaceHolder="false", ExcludeLocationTypes="Virtual", Fields="OriginalTitle,ProviderIds", SortBy="SortName", SortOrder="Ascending")
+        movies = self.items(IncludeItemTypes="Movie", Recursive="true", CollapseBoxSetItems="false", IsPlaceHolder="false", ExcludeLocationTypes="Virtual", Fields="OriginalTitle,ProviderIds", SortBy="SortName", SortOrder="Ascending")
         if not movies:
             raise ExtensionError("Aucun film trouvé dans Jellyfin. Vérifie la médiathèque et l'adresse du serveur.")
         return movies
@@ -130,19 +131,47 @@ class Jellyfin:
         self.created = True
         return collection_id
 
+    def collection_members(self, collection_id: str) -> set[str]:
+        # Collections hold linked children, not physical child files. Jellyfin's
+        # non-recursive API-key query only enumerates physical children and can
+        # therefore return an empty list for a populated collection.
+        return {m["Id"] for m in self.items(
+            ParentId=item_id(collection_id), Recursive="true",
+            CollapseBoxSetItems="false", SortBy="SortName", SortOrder="Ascending",
+        )}
+
+    def _confirm_members(self, collection_id: str, desired: set[str], additions_only: bool = False) -> set[str]:
+        actual: set[str] = set()
+        for delay in (0, 0.5, 1.5):
+            if delay:
+                time.sleep(delay)
+            actual = self.collection_members(collection_id)
+            confirmed = desired <= actual if additions_only else desired == actual
+            if confirmed:
+                return actual
+        missing, unexpected = desired - actual, actual - desired
+        stage = "après ajout" if additions_only else "après synchronisation"
+        raise ExtensionError(
+            f"Collection non confirmée {stage} : {len(desired)} film(s) attendu(s), "
+            f"{len(actual)} élément(s) reçu(s), {len(missing)} manquant(s), "
+            f"{len(unexpected)} inattendu(s). Nouvelle tentative au prochain passage."
+        )
+
     def sync(self, collection_id: str | None, desired: list[str], dry_run: bool) -> dict:
         if not collection_id:
             return {"added": len(desired), "removed": 0, "created": bool(desired), "collection_id": None}
-        current = {m["Id"] for m in self.items(ParentId=collection_id, Recursive="false")}
+        current = self.collection_members(collection_id)
         desired_set = {item_id(i) for i in desired}
         added, removed = sorted(desired_set - current), sorted(current - desired_set)
         if not dry_run:
             # Add first. If this fails, yesterday's selection has not been removed.
             for offset in range(0, len(added), 50):
                 self.request("POST", f"/Collections/{collection_id}/Items", Ids=",".join(added[offset:offset + 50]))
+            if added:
+                # Keep the previous selection until Jellyfin confirms the new
+                # films are actually present, even if it already returned 204.
+                self._confirm_members(collection_id, desired_set, additions_only=True)
             for offset in range(0, len(removed), 50):
                 self.request("DELETE", f"/Collections/{collection_id}/Items", Ids=",".join(removed[offset:offset + 50]))
-            actual = {m["Id"] for m in self.items(ParentId=collection_id, Recursive="false")}
-            if actual != desired_set:
-                raise ExtensionError("Jellyfin n'a pas encore confirmé le contenu attendu de la collection ; nouvelle tentative au prochain passage.")
+            self._confirm_members(collection_id, desired_set)
         return {"added": len(desired_set) if self.created else len(added), "removed": len(removed), "created": self.created, "collection_id": collection_id}
