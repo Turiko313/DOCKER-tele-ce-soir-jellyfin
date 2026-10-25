@@ -102,12 +102,12 @@ ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:latest
 | Étiquette | Contenu |
 | --- | --- |
 | `latest` | Dernière version stable publiée. |
-| `1.0.2` | Version précise, à utiliser pour figer une installation. |
+| `1.0.3` | Version précise, à utiliser pour figer une installation. |
 | `1.0`, `1` | Dernière version publiée dans cette branche de versions. |
 | `edge` | Dernier commit de `main` ayant passé les tests. |
 | `sha-…` | Image associée à un commit précis. |
 
-Pour figer une version, indique par exemple `CESOIR_VERSION=1.0.2` dans `.env`. Pour appliquer une nouvelle image :
+Pour figer une version, indique par exemple `CESOIR_VERSION=1.0.3` dans `.env`. Pour appliquer une nouvelle image :
 
 ```sh
 docker compose pull
@@ -171,10 +171,25 @@ Le volume `ce-soir-data` contient :
 - `preview.json` : dernière simulation.
 - `guide.xml` et `guide-cache.json` : programme mis en cache.
 - `health.json` : résultat du dernier passage, utilisé pour l'état de santé Docker.
+- `service.json` : dernier démarrage du service, pour identifier les relances rapprochées.
 
 Une seule instance peut utiliser ce volume. Pour une simulation après installation, arrête d'abord le service avec `docker compose stop ce-soir`, lance la commande `--dry-run`, puis redémarre avec `docker compose up -d`.
 
 ## Dépannage
+
+Depuis la version 1.0.3, les journaux donnent directement les titres écartés et leur motif : aucun titre ou identifiant correspondant, année différente, homonyme ambigu ou identifiants contradictoires. Une exclusion ne prouve pas à elle seule l'absence physique du fichier : vérifie aussi les titres français et originaux de sa fiche Jellyfin, ou utilise `title_overrides` pour une traduction différente.
+
+Exemple de bilan et de détails :
+
+```text
+Collection inchangée — soirée du 2026-10-25 : 4 film(s) disponible(s), 4 diffusion(s) retenue(s) sur 12 ; 8 écartée(s) ; ajouts : 0, retraits : 0.
+  RETENU | 25/10 21:10 | TF1 | Doctor Strange in the Multiverse of Madness (2022)
+  ÉCARTÉ | 26/10 00:10 | France 2 | Nosferatu — aucun titre ou identifiant correspondant dans la médiathèque
+```
+
+Le nombre de films est distinct de celui des diffusions : un même film peut passer sur plusieurs chaînes ou à plusieurs horaires. Les dates évitent les confusions après minuit. Les détails complets s'affichent au démarrage, en simulation ou lorsque le résultat change ; les contrôles suivants conservent un bilan compact. Le rapport JSON complet reste actualisé à chaque passage réussi.
+
+La ligne de version annonce un lancement du programme, pas un contrôle périodique. Deux lignes de démarrage espacées de quelques secondes signalent donc deux lancements (redéploiement OMV, mise à jour Watchtower, commande manuelle, etc.). Un démarrage continu détecté moins de deux minutes après le précédent est explicitement signalé lorsque le même volume `/data` est conservé. Le contrôle de santé Docker ne produit pas cette annonce.
 
 | Symptôme | Vérification |
 | --- | --- |
@@ -218,11 +233,11 @@ Le workflow [Tests, Docker et versions](.github/workflows/docker.yml) :
 
 Les pull requests exécutent les tests sans publier d'image. La publication utilise le `GITHUB_TOKEN` temporaire de GitHub Actions ; aucun secret personnel du NAS n'est nécessaire.
 
-Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.0.3` :
+Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.0.4` :
 
 ```sh
-git tag -a v1.0.3 -m "Version 1.0.3"
-git push origin main v1.0.3
+git tag -a v1.0.4 -m "Version 1.0.4"
+git push origin main v1.0.4
 ```
 
 ## Validation et limites

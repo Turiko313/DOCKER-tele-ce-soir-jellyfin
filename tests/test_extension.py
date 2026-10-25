@@ -16,12 +16,13 @@ from urllib.parse import parse_qs, urlsplit
 import xml.etree.ElementTree as ET
 import zipfile
 
-from cesoir.app import run_once
+from cesoir.app import main, run_once
 from cesoir.config import Config, ExtensionError, atomic_json, evening_window
 from cesoir.guide import GuideCache, Programme, normalize, parse_guide, xmltv_datetime
 from cesoir.jellyfin import Jellyfin
 from cesoir.locking import instance_lock
 from cesoir.matching import Matcher
+from cesoir.reporting import log_startup
 
 A, B, C = "a" * 32, "b" * 32, "c" * 32
 NOW = datetime(2026, 10, 25, 14, 0, tzinfo=timezone.utc)
@@ -352,6 +353,51 @@ class IntegrationTests(unittest.TestCase):
         self.assertEqual(report["changes"]["added"], 0)
         self.assertTrue((self.cfg.data_dir / "report.json").exists())
 
+    def test_unchanged_checks_keep_summary_and_skip_repeated_details(self):
+        with self.feed(), self.assertLogs(level="INFO") as first:
+            run_once(self.cfg, now=NOW)
+        self.assertTrue(any("RETENU |" in line for line in first.output))
+        with self.assertLogs(level="INFO") as following:
+            run_once(self.cfg, now=NOW)
+        self.assertEqual(len(following.output), 1)
+        self.assertIn("Collection inchangée", following.output[0])
+        self.assertFalse(any("RETENU |" in line for line in following.output))
+        with self.assertLogs(level="INFO") as restarted:
+            run_once(self.cfg, now=NOW, force_details=True)
+        self.assertTrue(any("RETENU |" in line for line in restarted.output))
+
+    def test_exclusions_include_reason_channel_and_date_after_midnight(self):
+        extra = '''<programme start="20261026001000 +0100" channel="TF1.fr">
+<title>Un film absent</title><category>Film</category><date>2025</date></programme>'''
+        xml = guide_xml().replace(b"</tv>", extra.encode() + b"</tv>")
+        with self.feed(xml), self.assertLogs(level="INFO") as logs:
+            report = run_once(self.cfg, now=NOW)
+        skipped = report["skipped"][0]
+        self.assertEqual(skipped["start"], "2026-10-26T00:10:00+01:00")
+        self.assertEqual(skipped["channel_id"], "TF1.fr")
+        self.assertEqual(report["skipped_reason_counts"], {"absent": 1})
+        self.assertTrue(any("ÉCARTÉ | 26/10 00:10 | TF1 | Un film absent (2025)" in line and "aucun titre ou identifiant" in line for line in logs.output))
+
+    def test_changed_rejection_details_are_logged_without_collection_changes(self):
+        self.owned_collection([A])
+        for title in ("Premier film absent", "Autre film absent"):
+            (self.cfg.data_dir / "guide-cache.json").unlink(missing_ok=True)
+            extra = f'<programme start="20261025230000 +0100" channel="TF1.fr"><title>{title}</title><category>Film</category></programme>'
+            with self.feed(guide_xml().replace(b"</tv>", extra.encode() + b"</tv>")), self.assertLogs(level="INFO") as logs:
+                report = run_once(self.cfg, now=NOW)
+            self.assertEqual(report["changes"]["added"], 0)
+            self.assertTrue(any("ÉCARTÉ |" in line and title in line for line in logs.output))
+
+    def test_multiple_broadcasts_of_one_movie_are_counted_separately(self):
+        extra = '''<programme start="20261025233000 +0100" channel="TF1.fr">
+<title>Le Cinéma des étoiles</title><category>Film</category><date>2001</date></programme>'''
+        xml = guide_xml().replace(b"</tv>", extra.encode() + b"</tv>")
+        with self.feed(xml), self.assertLogs(level="INFO") as logs:
+            report = run_once(self.cfg, now=NOW)
+        self.assertEqual(report["collection_movie_count"], 1)
+        self.assertEqual(report["matched_broadcast_count"], 2)
+        self.assertTrue(any("1 film(s) disponible(s), 2 diffusion(s) retenue(s) sur 2" in line for line in logs.output))
+
     def test_dry_run_makes_no_jellyfin_writes_or_state(self):
         with self.feed():
             report = run_once(self.cfg, dry_run=True, now=NOW)
@@ -464,6 +510,26 @@ class IntegrationTests(unittest.TestCase):
 
 
 class ConfigAndLockTests(unittest.TestCase):
+    def test_rapid_relaunch_is_distinguished_from_regular_checks(self):
+        with tempfile.TemporaryDirectory(dir=TEMP_ROOT) as directory:
+            cfg = config(Path(directory))
+            with self.assertLogs(level="INFO"):
+                log_startup(cfg, "service continu", NOW)
+            with self.assertLogs(level="INFO") as logs:
+                log_startup(cfg, "service continu", NOW.replace(second=29))
+            self.assertTrue(any("Nouveau lancement 29 secondes" in line for line in logs.output))
+            with self.assertLogs(level="INFO") as later:
+                log_startup(cfg, "service continu", NOW.replace(minute=15))
+            self.assertFalse(any("Nouveau lancement" in line for line in later.output))
+
+    def test_healthcheck_does_not_announce_or_record_a_service_start(self):
+        with tempfile.TemporaryDirectory(dir=TEMP_ROOT) as directory:
+            cfg = config(Path(directory))
+            atomic_json(cfg.data_dir / "health.json", {"ok": True, "checked_at": datetime.now(timezone.utc).timestamp()})
+            with patch("sys.argv", ["cesoir", "--healthcheck"]), patch.object(Config, "load", return_value=cfg), self.assertNoLogs(level="INFO"):
+                self.assertEqual(main(), 0)
+            self.assertFalse((cfg.data_dir / "service.json").exists())
+
     def test_credentials_and_insecure_guide_are_rejected(self):
         cfg = config(Path("unused"))
         cfg.validate()

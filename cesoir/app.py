@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 from datetime import datetime, timezone
 import json
 import logging
@@ -13,12 +14,12 @@ from .guide import GuideCache
 from .jellyfin import Jellyfin
 from .matching import Matcher
 from .locking import instance_lock
-from . import __version__
+from .reporting import log_report, log_startup, read_report
 
 LOG = logging.getLogger(__name__)
 
 
-def run_once(config: Config, dry_run: bool = False, now: datetime | None = None) -> dict:
+def run_once(config: Config, dry_run: bool = False, now: datetime | None = None, *, force_details: bool = False) -> dict:
     now = now or datetime.now(timezone.utc)
     start, end = evening_window(now, config)
     guide, used_fallback = GuideCache(config).load(now, start, end)
@@ -32,7 +33,9 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None)
         if match:
             matches.append(match)
         else:
-            skipped.append({"title": programme.title, "channel": programme.channel_name, "reason": reason})
+            skipped.append({"title": programme.title, "channel": programme.channel_name, "reason": reason,
+                            "channel_id": programme.channel_id, "year": programme.year,
+                            "start": programme.start.astimezone(start.tzinfo).isoformat()})
     desired = list(dict.fromkeys(m.movie["Id"] for m in matches))
     collection_id = client.collection(server_id, desired, dry_run)
     changes = client.sync(collection_id, desired, dry_run)
@@ -41,29 +44,30 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None)
         "evening": start.date().isoformat(),
         "start": start.isoformat(),
         "end": end.isoformat(),
+        "timezone": config.timezone,
         "jellyfin_version": version,
         "dry_run": dry_run,
         "cached_guide_fallback": used_fallback,
-        "library_movie_count": len(movies),
+        "library_movie_count": len(matcher.movies),
         "guide_movie_count": len(guide.movies),
         "covered_channel_count": len(guide.covered_channels),
         "collection_movie_count": len(desired),
+        "matched_broadcast_count": len(matches),
+        "skipped_reason_counts": dict(Counter(p["reason"] for p in skipped)),
         "changes": changes,
         "broadcasts": [
             {"title": m.movie["Name"], "jellyfin_id": m.movie["Id"], "tv_title": m.programme.title,
              "channel": m.programme.channel_name, "channel_id": m.programme.channel_id,
-             "start": m.programme.start.astimezone(start.tzinfo).isoformat(), "match_method": m.method}
+             "start": m.programme.start.astimezone(start.tzinfo).isoformat(), "match_method": m.method,
+             "year": m.movie.get("ProductionYear")}
             for m in matches
         ],
         "skipped": skipped,
     }
-    atomic_json(config.data_dir / ("preview.json" if dry_run else "report.json"), report)
-    prefix = "Simulation" if dry_run else "Collection actualisée"
-    LOG.info("%s : soirée du %s, %d film(s) sur %d diffusion(s) de films, %d ajout(s), %d retrait(s).", prefix, report["evening"], len(desired), len(guide.movies), changes["added"], changes["removed"])
-    for match in matches:
-        LOG.info("  %s — %s — %s", match.programme.start.astimezone(start.tzinfo).strftime("%H:%M"), match.programme.channel_name, match.movie["Name"])
-    if skipped:
-        LOG.info("%d diffusion(s) sans correspondance certaine ; détails dans %s.", len(skipped), "preview.json" if dry_run else "report.json")
+    report_path = config.data_dir / ("preview.json" if dry_run else "report.json")
+    previous = read_report(report_path)
+    atomic_json(report_path, report)
+    log_report(report, previous, report_path, force_details)
     return report
 
 
@@ -90,17 +94,22 @@ def main() -> int:
         return 1
     if args.healthcheck:
         return healthcheck(config)
-    LOG.info("Films à la télé ce soir — version %s", __version__)
     stop = threading.Event()
+    def request_stop(signum, _frame):
+        LOG.info("Arrêt demandé (%s).", signal.Signals(signum).name)
+        stop.set()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        signal.signal(sig, lambda *_: stop.set())
+        signal.signal(sig, request_stop)
     try:
         with instance_lock(config.data_dir):
+            log_startup(config, "simulation" if args.dry_run else ("passage unique" if args.once else "service continu"))
+            first_pass = True
             while not stop.is_set():
                 success = False
                 try:
-                    run_once(config, args.dry_run)
+                    run_once(config, args.dry_run, force_details=first_pass)
                     success = True
+                    first_pass = False
                 except Exception as error:
                     # Redact the secret even for unexpected exception messages.
                     message = str(error).replace(config.api_key, "[clé masquée]")
@@ -115,4 +124,5 @@ def main() -> int:
     except ExtensionError as error:
         LOG.error("%s", error)
         return 1
+    LOG.info("Service arrêté.")
     return 0

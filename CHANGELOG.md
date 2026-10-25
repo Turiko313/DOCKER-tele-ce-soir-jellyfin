@@ -1,5 +1,14 @@
 # Historique des versions
 
+## 1.0.3 — 2026-10-25
+
+- Journaux détaillant chaque diffusion retenue ou écartée : date, horaire, chaîne, titre, année disponible et motif d'exclusion.
+- Bilan distinguant le nombre de films, les diffusions et les changements réellement effectués ; une collection sans modification est annoncée comme inchangée.
+- Détails affichés au démarrage ou lors d'un changement ; bilan compact aux contrôles identiques suivants.
+- Rapport enrichi avec les horaires des exclusions, les motifs regroupés et le nombre de diffusions retenues.
+- Démarrages rapprochés identifiés, intervalle de contrôle affiché et arrêt normal signalé pour faciliter le diagnostic des relances Docker/OMV.
+- Conservation des règles prudentes de correspondance : aucun ajout fondé sur un titre simplement ressemblant.
+
 ## 1.0.2 — 2026-10-25
 
 - Correction de la lecture des collections avec une clé API : les films liés sont maintenant récupérés avec une requête récursive, sans regroupement en collections.
