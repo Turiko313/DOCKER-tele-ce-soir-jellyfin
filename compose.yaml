@@ -1,0 +1,38 @@
+services:
+  ce-soir:
+    image: ghcr.io/turiko313/ce-soir-jellyfin:${CESOIR_VERSION:-latest}
+    restart: unless-stopped
+    environment:
+      JELLYFIN_URL: ${JELLYFIN_URL:?Renseigne JELLYFIN_URL dans le fichier .env}
+      JELLYFIN_API_KEY_FILE: /run/secrets/jellyfin_api_key
+      TZ: Europe/Paris
+    secrets:
+      - jellyfin_api_key
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - ce-soir-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-m", "cesoir", "--healthcheck"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
+secrets:
+  jellyfin_api_key:
+    file: ./jellyfin-api-key.txt
+
+volumes:
+  ce-soir-data:

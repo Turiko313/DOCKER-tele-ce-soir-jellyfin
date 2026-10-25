@@ -1,0 +1,14 @@
+{
+  "guide_url": "https://xmltvfr.fr/xmltv/xmltv_tnt.xml.gz",
+  "timezone": "Europe/Paris",
+  "start": "20:00",
+  "end": "02:00",
+  "channels": [],
+  "collection_name": "Films à la télé ce soir",
+  "collection_id": "",
+  "interval_seconds": 900,
+  "guide_refresh_hours": 12,
+  "guide_max_age_hours": 48,
+  "include_tv_movies": true,
+  "title_overrides": {}
+}

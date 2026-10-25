@@ -1,0 +1,7 @@
+**
+!cesoir
+!cesoir/*.py
+!config.json
+!Dockerfile
+**/__pycache__
+**/*.pyc

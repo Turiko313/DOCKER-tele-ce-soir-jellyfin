@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+.env
+jellyfin-api-key.txt
+data/
+tests/temporary/
+dist/
+.test-tmp/
+*.egg-info/

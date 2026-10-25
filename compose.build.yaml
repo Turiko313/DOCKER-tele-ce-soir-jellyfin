@@ -1,0 +1,5 @@
+services:
+  ce-soir:
+    image: ce-soir-jellyfin:local
+    build:
+      context: .
