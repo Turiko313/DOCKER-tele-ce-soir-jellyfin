@@ -1,7 +1,7 @@
 # Films à la télé ce soir
 
-[![Tests et Docker](https://github.com/Turiko313/ce-soir-jellyfin/actions/workflows/docker.yml/badge.svg)](https://github.com/Turiko313/ce-soir-jellyfin/actions/workflows/docker.yml)
-[![Version](https://img.shields.io/github/v/release/Turiko313/ce-soir-jellyfin)](https://github.com/Turiko313/ce-soir-jellyfin/releases/latest)
+[![Tests et Docker](https://github.com/Turiko313/DOCKER-tele-ce-soir-jellyfin/actions/workflows/docker.yml/badge.svg)](https://github.com/Turiko313/DOCKER-tele-ce-soir-jellyfin/actions/workflows/docker.yml)
+[![Version](https://img.shields.io/github/v/release/Turiko313/DOCKER-tele-ce-soir-jellyfin)](https://github.com/Turiko313/DOCKER-tele-ce-soir-jellyfin/releases/latest)
 
 Retrouve dans **Jellyfin → Collections → Films à la télé ce soir** les films de ta médiathèque qui passent à la télévision pendant la soirée.
 
@@ -23,13 +23,13 @@ Elle tourne dans un conteneur Docker supplémentaire sur le NAS et utilise l'API
 
 ### 1. Télécharger le projet
 
-Télécharge l'archive de la [dernière version](https://github.com/Turiko313/ce-soir-jellyfin/releases/latest) et extrais-la dans un dossier du NAS, par exemple `docker/ce-soir-jellyfin`.
+Télécharge l'archive de la [dernière version](https://github.com/Turiko313/DOCKER-tele-ce-soir-jellyfin/releases/latest) et extrais-la dans un dossier du NAS, par exemple `docker/ce-soir-jellyfin`.
 
 Tu peux aussi cloner le dépôt :
 
 ```sh
-git clone https://github.com/Turiko313/ce-soir-jellyfin.git
-cd ce-soir-jellyfin
+git clone https://github.com/Turiko313/DOCKER-tele-ce-soir-jellyfin.git
+cd DOCKER-tele-ce-soir-jellyfin
 ```
 
 ### 2. Préparer les deux fichiers personnels
@@ -96,18 +96,18 @@ Le nom affiché reste « Films à la télé ce soir » ; elle se classe avant le
 ## Image Docker et versions
 
 ```text
-ghcr.io/turiko313/ce-soir-jellyfin:latest
+ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:latest
 ```
 
 | Étiquette | Contenu |
 | --- | --- |
 | `latest` | Dernière version stable publiée. |
-| `1.0.0` | Version précise, à utiliser pour figer une installation. |
+| `1.0.1` | Version précise, à utiliser pour figer une installation. |
 | `1.0`, `1` | Dernière version publiée dans cette branche de versions. |
 | `edge` | Dernier commit de `main` ayant passé les tests. |
 | `sha-…` | Image associée à un commit précis. |
 
-Pour figer une version, indique par exemple `CESOIR_VERSION=1.0.0` dans `.env`. Pour appliquer une nouvelle image :
+Pour figer une version, indique par exemple `CESOIR_VERSION=1.0.1` dans `.env`. Pour appliquer une nouvelle image :
 
 ```sh
 docker compose pull
@@ -218,11 +218,11 @@ Le workflow [Tests, Docker et versions](.github/workflows/docker.yml) :
 
 Les pull requests exécutent les tests sans publier d'image. La publication utilise le `GITHUB_TOKEN` temporaire de GitHub Actions ; aucun secret personnel du NAS n'est nécessaire.
 
-Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.0.1` :
+Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.0.2` :
 
 ```sh
-git tag -a v1.0.1 -m "Version 1.0.1"
-git push origin main v1.0.1
+git tag -a v1.0.2 -m "Version 1.0.2"
+git push origin main v1.0.2
 ```
 
 ## Validation et limites

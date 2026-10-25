@@ -37,11 +37,11 @@ def main():
     (output / "release-notes.md").write_text(
         f"Version **{__version__}** de Films à la télé ce soir.\n\n" + changes + "\n\n"
         "```sh\n"
-        f"docker pull ghcr.io/turiko313/ce-soir-jellyfin:{__version__}\n"
+        f"docker pull ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:{__version__}\n"
         "```\n\n"
         "Téléchargez l'archive, copiez les deux fichiers `.example` vers leurs noms sans `.example`, "
         "renseignez l'adresse et la clé API de votre Jellyfin, puis lancez `docker compose up -d`.\n\n"
-        "Consultez le [README](https://github.com/Turiko313/ce-soir-jellyfin#readme) pour l'installation, "
+        "Consultez le [README](https://github.com/Turiko313/DOCKER-tele-ce-soir-jellyfin#readme) pour l'installation, "
         "le tri de la collection et les réglages. Les données de votre NAS ne sont pas incluses.\n",
         encoding="utf-8",
     )

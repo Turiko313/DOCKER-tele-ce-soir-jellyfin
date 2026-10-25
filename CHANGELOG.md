@@ -1,5 +1,11 @@
 # Historique des versions
 
+## 1.0.1 — 2026-10-25
+
+- Dépôt renommé en `Turiko313/DOCKER-tele-ce-soir-jellyfin`.
+- Image publiée sous `ghcr.io/turiko313/docker-tele-ce-soir-jellyfin`.
+- README et fichiers Docker alignés sur le nom définitif.
+
 ## 1.0.0 — 2026-10-25
 
 - Création et actualisation d'une collection Jellyfin « Films à la télé ce soir ».

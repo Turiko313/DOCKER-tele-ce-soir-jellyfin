@@ -1,6 +1,6 @@
 services:
   ce-soir:
-    image: ghcr.io/turiko313/ce-soir-jellyfin:${CESOIR_VERSION:-latest}
+    image: ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:${CESOIR_VERSION:-latest}
     restart: unless-stopped
     environment:
       JELLYFIN_URL: ${JELLYFIN_URL:?Renseigne JELLYFIN_URL dans le fichier .env}

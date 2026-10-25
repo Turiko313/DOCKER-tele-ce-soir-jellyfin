@@ -15,6 +15,6 @@ docker compose up -d
 docker compose logs --tail=50 ce-soir
 ```
 
-L'image Docker publiée est `ghcr.io/turiko313/ce-soir-jellyfin:latest`. Elle est proposée pour les NAS AMD64 et ARM64.
+L'image Docker publiée est `ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:latest`. Elle est proposée pour les NAS AMD64 et ARM64.
 
 Pour placer la collection avant les noms alphabétiques habituels : depuis Jellyfin dans un navigateur, ouvre **⋮ → Éditer les métadonnées** sur la collection, puis mets `000 - Films à la télé ce soir` dans **Titre de tri**. Sur Android TV, choisis le tri par **Nom** en ordre croissant.
