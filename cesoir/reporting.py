@@ -17,6 +17,9 @@ REASONS = {
     "titre ambigu": "plusieurs films possibles, sans information pour les départager",
     "identifiants différents": "titre trouvé, mais identifiants IMDb/TMDb contradictoires",
     "correspondances manuelles contradictoires": "plusieurs correspondances manuelles contradictoires",
+    "identifiant absent": "film identifié, mais aucun identifiant correspondant dans la médiathèque",
+    "métadonnées ambiguës": "plusieurs œuvres possibles dans les métadonnées ; aucun choix automatique",
+    "métadonnées non concluantes": "recherche de métadonnées sans résultat exact et suffisamment renseigné",
 }
 
 
@@ -57,16 +60,20 @@ def log_report(report: dict, previous: dict, path: Path, force_details: bool = F
     LOG.info("%s — soirée du %s : %d film(s) disponible(s), %d diffusion(s) retenue(s) sur %d ; %d écartée(s) ; ajouts : %d, retraits : %d.",
              status, report["evening"], report["collection_movie_count"], report["matched_broadcast_count"],
              report["guide_movie_count"], len(report["skipped"]), changes["added"], changes["removed"])
-    keys = ("evening", "start", "end", "broadcasts", "skipped", "library_movie_count", "covered_channel_count", "cached_guide_fallback")
+    keys = ("evening", "start", "end", "broadcasts", "skipped", "library_movie_count", "covered_channel_count", "cached_guide_fallback", "metadata_lookup_enabled", "cached_metadata_fallback")
     details = force_details or changed or report["dry_run"] or any(report.get(k) != previous.get(k) for k in keys)
     if not details:
         return
     LOG.info("Médiathèque : %d film(s) disponible(s). Guide : %d chaîne(s) couverte(s). Horaires : %s.", report["library_movie_count"], report["covered_channel_count"], report["timezone"])
+    if report.get("metadata_lookup_enabled"):
+        LOG.info("Recherche des traductions via Jellyfin : %d recherche(s), %d résultat(s) en cache.", report["metadata_lookup_requests"], report["metadata_lookup_cache_hits"])
     if report["cached_guide_fallback"]:
         LOG.warning("Programme lu dans le cache de secours : le téléchargement du guide a échoué.")
     for broadcast in report["broadcasts"]:
         year = f" ({broadcast['year']})" if broadcast.get("year") else ""
-        LOG.info("  RETENU | %s | %s | %s%s", _schedule(broadcast["start"]), broadcast["channel"], broadcast["title"], year)
+        LOG.info("  RETENU | %s | %s | %s%s | %s", _schedule(broadcast["start"]), broadcast["channel"], broadcast["title"], year, broadcast["match_method"])
+        if broadcast["tv_title"] != broadcast["title"]:
+            LOG.info("           Titre du programme TV : %s", broadcast["tv_title"])
     for skipped in report["skipped"]:
         year = f" ({skipped['year']})" if skipped.get("year") else ""
         LOG.info("  ÉCARTÉ | %s | %s | %s%s — %s", _schedule(skipped["start"]), skipped["channel"], skipped["title"], year, REASONS.get(skipped["reason"], skipped["reason"]))

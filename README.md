@@ -17,6 +17,7 @@ Elle tourne dans un conteneur Docker supplémentaire sur le NAS et utilise l'API
 - Après minuit, conservation de la soirée précédente jusqu'à 2 h.
 - Affichage des seuls films déjà présents dans la médiathèque ; aucun téléchargement de films.
 - Correspondances par IMDb/TMDb, ou par titre normalisé et année lorsque les données sont disponibles. Les homonymes ambigus sont écartés.
+- Recherche complémentaire des traductions via les métadonnées de Jellyfin si aucun titre local ne correspond ; le résultat doit fournir un identifiant TMDb/IMDb déjà présent dans la médiathèque.
 - Images Docker pour **Linux AMD64 et ARM64**, construites automatiquement après réussite des tests.
 
 ## Installation Docker sur le NAS
@@ -102,12 +103,12 @@ ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:latest
 | Étiquette | Contenu |
 | --- | --- |
 | `latest` | Dernière version stable publiée. |
-| `1.0.3` | Version précise, à utiliser pour figer une installation. |
-| `1.0`, `1` | Dernière version publiée dans cette branche de versions. |
+| `1.1.0` | Version précise, à utiliser pour figer une installation. |
+| `1.1`, `1` | Dernière version publiée dans cette branche de versions. |
 | `edge` | Dernier commit de `main` ayant passé les tests. |
 | `sha-…` | Image associée à un commit précis. |
 
-Pour figer une version, indique par exemple `CESOIR_VERSION=1.0.3` dans `.env`. Pour appliquer une nouvelle image :
+Pour figer une version, indique par exemple `CESOIR_VERSION=1.1.0` dans `.env`. Pour appliquer une nouvelle image :
 
 ```sh
 docker compose pull
@@ -126,6 +127,7 @@ Modifie `config.json`, puis redémarre le conteneur avec `docker compose restart
 | `timezone` | Fuseau horaire, `"Europe/Paris"` par défaut. |
 | `channels` | `[]` prend toutes les chaînes du fichier choisi ; une liste limite la sélection. |
 | `include_tv_movies` | `true` inclut les téléfilms ; `false` les écarte. |
+| `metadata_lookup` | `true` recherche aussi les traductions via les fournisseurs de métadonnées Jellyfin. `METADATA_LOOKUP=false` dans l'environnement Docker désactive cette étape, même sans fichier de configuration monté. |
 | `collection_name` | Nom de la collection ; s'il est modifié, ajuste aussi le nom de la collection existante dans Jellyfin. |
 | `collection_id` | Facultatif : identifiant d'une collection existante dont tu confies explicitement tout le contenu à l'extension. |
 | `interval_seconds` | Intervalle de vérification, 900 secondes par défaut, au minimum 60. |
@@ -142,9 +144,15 @@ Exemple de sélection de chaînes :
 
 Consulte la [liste des chaînes du guide TNT](https://xmltvfr.fr/channels.php?guide=tnt) pour les identifiants. Le guide peut aussi inclure des chaînes payantes ; sélectionne celles qui t'intéressent. Limites de téléchargement : 24 Mio compressés et 128 Mio décompressés. Le fournisseur reste un service tiers dont la disponibilité et la qualité des données peuvent varier.
 
-### Corriger un titre non reconnu
+### Retrouver les traductions et corriger un titre non reconnu
 
-Le titre français ou original doit être identique après normalisation des accents, de la casse et de la ponctuation. Si deux films portent le même titre sans informations suffisantes pour les distinguer, l'extension les écarte.
+L'extension cherche d'abord le titre français ou original après normalisation des accents, de la casse et de la ponctuation, ou les identifiants fournis dans le guide.
+
+Depuis la version 1.1.0, si aucun titre local ne correspond et que le guide ne fournit pas déjà d'identifiant, elle consulte la recherche des fournisseurs activés dans Jellyfin, par exemple TMDb. Le titre TV est transmis via Jellyfin à ces fournisseurs. Cela utilise la [recherche de métadonnées Jellyfin](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/ItemLookupController.cs), sans nouvelle clé ni extension à installer.
+
+Un résultat doit porter exactement le titre recherché après normalisation, respecter l'année lorsqu'elle figure dans le guide, être non ambigu et fournir un identifiant TMDb/IMDb qui existe dans le catalogue local. Une traduction peut ainsi conduire au bon film, même si son nom dans Jellyfin diffère. Si plusieurs œuvres portent ce nom, l'extension ne choisit pas arbitrairement la première. Une recherche sans année renvoyant au moins vingt résultats est également considérée comme insuffisante. Elle n'ajoute jamais un film absent du catalogue et ne modifie pas les fiches existantes.
+
+Les recherches sont mises en cache pendant 24 heures, jusqu'à 500 entrées. Si l'API de recherche échoue, un cache de moins de sept jours peut servir de secours ; à défaut, la synchronisation échoue et la collection précédente est conservée. Si le fournisseur renvoie des résultats vides ou ambigus, les diffusions concernées sont écartées normalement. Pour revenir aux seules correspondances locales, définis `METADATA_LOOKUP: "false"` dans `environment` de ton Compose OMV, ou `"metadata_lookup": false` dans `config.json`.
 
 Une traduction différente peut être associée manuellement à un film :
 
@@ -172,6 +180,7 @@ Le volume `ce-soir-data` contient :
 - `guide.xml` et `guide-cache.json` : programme mis en cache.
 - `health.json` : résultat du dernier passage, utilisé pour l'état de santé Docker.
 - `service.json` : dernier démarrage du service, pour identifier les relances rapprochées.
+- `metadata-cache.json` : titres TV recherchés et identifiants publics retournés par les fournisseurs, sans clé API.
 
 Une seule instance peut utiliser ce volume. Pour une simulation après installation, arrête d'abord le service avec `docker compose stop ce-soir`, lance la commande `--dry-run`, puis redémarre avec `docker compose up -d`.
 
@@ -184,10 +193,12 @@ Exemple de bilan et de détails :
 ```text
 Collection inchangée — soirée du 2026-10-25 : 4 film(s) disponible(s), 4 diffusion(s) retenue(s) sur 12 ; 8 écartée(s) ; ajouts : 0, retraits : 0.
   RETENU | 25/10 21:10 | TF1 | Doctor Strange in the Multiverse of Madness (2022)
-  ÉCARTÉ | 26/10 00:10 | France 2 | Nosferatu — aucun titre ou identifiant correspondant dans la médiathèque
+  ÉCARTÉ | 26/10 00:10 | France 2 | Nosferatu — plusieurs œuvres possibles dans les métadonnées ; aucun choix automatique
 ```
 
 Le nombre de films est distinct de celui des diffusions : un même film peut passer sur plusieurs chaînes ou à plusieurs horaires. Les dates évitent les confusions après minuit. Les détails complets s'affichent au démarrage, en simulation ou lorsque le résultat change ; les contrôles suivants conservent un bilan compact. Le rapport JSON complet reste actualisé à chaque passage réussi.
+
+Depuis la version 1.1.0, le rapport indique aussi le nombre de recherches de traductions, les résultats servis depuis le cache et la méthode utilisée pour chaque film retenu. Les exclusions distinguent les films identifiés sans identifiant correspondant dans la médiathèque, les recherches sans résultat exact et les homonymes non départagés. Ces diagnostics ne garantissent pas qu'un fichier ne soit pas présent sous une fiche mal identifiée.
 
 La ligne de version annonce un lancement du programme, pas un contrôle périodique. Deux lignes de démarrage espacées de quelques secondes signalent donc deux lancements (redéploiement OMV, mise à jour Watchtower, commande manuelle, etc.). Un démarrage continu détecté moins de deux minutes après le précédent est explicitement signalé lorsque le même volume `/data` est conservé. Le contrôle de santé Docker ne produit pas cette annonce.
 
@@ -233,11 +244,11 @@ Le workflow [Tests, Docker et versions](.github/workflows/docker.yml) :
 
 Les pull requests exécutent les tests sans publier d'image. La publication utilise le `GITHUB_TOKEN` temporaire de GitHub Actions ; aucun secret personnel du NAS n'est nécessaire.
 
-Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.0.4` :
+Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.1.1` :
 
 ```sh
-git tag -a v1.0.4 -m "Version 1.0.4"
-git push origin main v1.0.4
+git tag -a v1.1.1 -m "Version 1.1.1"
+git push origin main v1.1.1
 ```
 
 ## Validation et limites

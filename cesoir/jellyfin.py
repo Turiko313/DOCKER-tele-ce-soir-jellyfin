@@ -28,12 +28,17 @@ class Jellyfin:
         self.opener = urllib.request.build_opener(NoRedirects())
         self.created = False
 
-    def request(self, method: str, path: str, **query):
+    def request(self, method: str, path: str, *, json_body: dict | None = None, **query):
         url = self.config.jellyfin_url + path
         if query:
             url += "?" + urllib.parse.urlencode(query)
         auth = f'MediaBrowser Client="CeSoirJellyfin", Device="Docker", DeviceId="ce-soir-jellyfin", Version="{__version__}", Token="{self.config.api_key}"'
-        request = urllib.request.Request(url, method=method, headers={"Authorization": auth, "Accept": "application/json"})
+        headers = {"Authorization": auth, "Accept": "application/json"}
+        data = None
+        if json_body is not None:
+            data = json.dumps(json_body).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        request = urllib.request.Request(url, method=method, headers=headers, data=data)
         try:
             with self.opener.open(request, timeout=30) as response:
                 data = response.read(8 * 1024 * 1024 + 1)
@@ -87,6 +92,18 @@ class Jellyfin:
         if not isinstance(info, dict) or not info.get("Id"):
             raise ExtensionError("Impossible d'identifier le serveur Jellyfin.")
         return str(info["Id"]), str(info.get("Version", "inconnue"))
+
+    def search_movie(self, title: str, year: int | None) -> list[dict]:
+        info = {"Name": title, "MetadataLanguage": "fr", "MetadataCountryCode": "FR"}
+        if year is not None:
+            info["Year"] = year
+        # This endpoint only searches metadata; never call RemoteSearch/Apply.
+        result = self.request("POST", "/Items/RemoteSearch/Movie", json_body={
+            "SearchInfo": info, "IncludeDisabledProviders": False,
+        })
+        if not isinstance(result, list) or any(not isinstance(row, dict) for row in result):
+            raise ExtensionError("Résultat de recherche des métadonnées Jellyfin invalide.")
+        return result
 
     def _state(self) -> dict:
         path = self.config.data_dir / "state.json"

@@ -37,6 +37,7 @@ class Config:
     guide_refresh_hours: int = 12
     guide_max_age_hours: int = 48
     include_tv_movies: bool = True
+    metadata_lookup: bool = True
     title_overrides: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -50,6 +51,11 @@ class Config:
             secret_path = os.environ.get("JELLYFIN_API_KEY_FILE", "/run/secrets/jellyfin_api_key")
             raw["api_key"] = Path(secret_path).read_text(encoding="utf-8-sig").strip()
             raw["data_dir"] = Path(os.environ.get("DATA_DIR", "/data"))
+            if "METADATA_LOOKUP" in os.environ:
+                value = os.environ["METADATA_LOOKUP"].strip().lower()
+                if value not in {"true", "false"}:
+                    raise ValueError("METADATA_LOOKUP doit être true ou false")
+                raw["metadata_lookup"] = value == "true"
             if "channels" in raw:
                 if not isinstance(raw["channels"], list) or not all(isinstance(c, str) for c in raw["channels"]):
                     raise ValueError("channels doit être une liste d'identifiants XMLTV")
@@ -88,6 +94,8 @@ class Config:
             raise ValueError("guide_max_age_hours doit être supérieur ou égal à guide_refresh_hours")
         if type(self.include_tv_movies) is not bool:
             raise ValueError("include_tv_movies doit être true ou false")
+        if type(self.metadata_lookup) is not bool:
+            raise ValueError("metadata_lookup doit être true ou false")
         if not isinstance(self.title_overrides, dict) or not all(
             isinstance(k, str) and k.strip() and isinstance(v, str) and re.fullmatch(r"[a-fA-F0-9-]{32,36}", v)
             for k, v in self.title_overrides.items()

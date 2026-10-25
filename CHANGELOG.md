@@ -1,5 +1,15 @@
 # Historique des versions
 
+## 1.1.0 — 2026-10-25
+
+- Recherche des titres TV non reconnus via les fournisseurs de métadonnées déjà configurés dans Jellyfin, sans nouvelle clé API.
+- Correspondance entre traductions uniquement si un résultat exact et non ambigu fournit un identifiant TMDb/IMDb présent dans la médiathèque ; vérification de l'année lorsqu'elle est fournie.
+- Rejet des remakes et homonymes non départagés, des titres seulement ressemblants et des identifiants contradictoires.
+- Cache de recherche de 24 heures, limité à 500 recherches ; secours de sept jours en cas de panne, puis conservation de la collection si les recherches restent indisponibles.
+- Motifs distinguant un film identifié sans identifiant local, une recherche non concluante et des métadonnées ambiguës.
+- Fonction activée par défaut, désactivable avec `metadata_lookup: false` ou `METADATA_LOOKUP=false`. Aucune application de métadonnées aux films.
+- API de recherche vérifiée sur le serveur Jellyfin ; simulation de la soirée et contrôle des homonymes sans modification de la médiathèque.
+
 ## 1.0.3 — 2026-10-25
 
 - Journaux détaillant chaque diffusion retenue ou écartée : date, horaire, chaîne, titre, année disponible et motif d'exclusion.

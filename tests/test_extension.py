@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import gzip
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import io
@@ -11,7 +11,7 @@ from pathlib import Path
 import tempfile
 import threading
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlsplit
 import xml.etree.ElementTree as ET
 import zipfile
@@ -22,6 +22,7 @@ from cesoir.guide import GuideCache, Programme, normalize, parse_guide, xmltv_da
 from cesoir.jellyfin import Jellyfin
 from cesoir.locking import instance_lock
 from cesoir.matching import Matcher
+from cesoir.lookup import MetadataLookup
 from cesoir.reporting import log_startup
 
 A, B, C = "a" * 32, "b" * 32, "c" * 32
@@ -32,6 +33,7 @@ TEMP_ROOT.mkdir(parents=True, exist_ok=True)
 
 
 def config(data: Path, **kwargs) -> Config:
+    kwargs.setdefault("metadata_lookup", False)
     return Config("http://127.0.0.1:8096", KEY, data_dir=data, **kwargs)
 
 
@@ -226,6 +228,9 @@ class FakeServer:
         self.delay_add_reads = 0
         self.pending_additions = []
         self.pending_reads = 0
+        self.remote_results = []
+        self.remote_failure = False
+        self.remote_searches = []
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -283,6 +288,9 @@ class FakeServer:
                     total = len(items)
                     offset, limit = int(query.get("startindex", 0)), int(query.get("limit", 200))
                     self.respond(200, {"Items": [] if owner.bad_page else items[offset:offset + limit], "TotalRecordCount": total})
+                elif self.command == "POST" and path == "/Items/RemoteSearch/Movie":
+                    owner.remote_searches.append(json.loads(self.rfile.read(int(self.headers.get("Content-Length", "0")))))
+                    self.respond(500 if owner.remote_failure else 200, owner.remote_results)
                 elif self.command == "POST" and path == "/Collections":
                     owner.mutations.append((self.command, path))
                     owner.collections[C] = {"name": query["name"], "items": query.get("ids", "").split(",") if query.get("ids") else []}
@@ -406,6 +414,37 @@ class IntegrationTests(unittest.TestCase):
         self.assertFalse((self.cfg.data_dir / "state.json").exists())
         self.assertTrue((self.cfg.data_dir / "preview.json").exists())
 
+    def test_translated_tv_title_resolves_to_existing_movie_id(self):
+        self.cfg = replace(self.cfg, metadata_lookup=True)
+        self.server.movies = [movie(title="The Original Film", ProviderIds={"Tmdb": "42"})]
+        self.server.remote_results = [{"Name": "Titre français du programme", "ProductionYear": 2001, "ProviderIds": {"Tmdb": "42"}}]
+        with self.feed(guide_xml(title="Titre français du programme")):
+            report = run_once(self.cfg, now=NOW)
+        self.assertEqual(self.server.collections[C]["items"], [A])
+        self.assertEqual(report["broadcasts"][0]["match_method"], "métadonnées Jellyfin + identifiant")
+        self.assertEqual(self.server.remote_searches[0]["SearchInfo"], {"Name":"Titre français du programme", "Year":2001, "MetadataLanguage":"fr", "MetadataCountryCode":"FR"})
+        self.assertFalse(self.server.remote_searches[0]["IncludeDisabledProviders"])
+        self.assertTrue(all("RemoteSearch/Apply" not in path for _,path,_ in self.server.requests))
+
+    def test_metadata_failure_preserves_previous_collection(self):
+        self.cfg = replace(self.cfg, metadata_lookup=True)
+        self.owned_collection([B])
+        self.server.remote_failure = True
+        with self.feed(guide_xml(title="Titre à résoudre")), self.assertRaisesRegex(ExtensionError, "collection conservée"):
+            run_once(self.cfg, now=NOW)
+        self.assertEqual(self.server.collections[C]["items"], [B])
+        self.assertFalse(self.server.mutations)
+
+    def test_metadata_search_in_dry_run_does_not_apply_or_modify_items(self):
+        self.cfg = replace(self.cfg, metadata_lookup=True)
+        self.server.movies = [movie(title="Original", ProviderIds={"Tmdb":"42"})]
+        self.server.remote_results = [{"Name":"Titre TV", "ProductionYear":2001, "ProviderIds":{"Tmdb":"42"}}]
+        with self.feed(guide_xml(title="Titre TV")):
+            report = run_once(self.cfg, dry_run=True, now=NOW)
+        self.assertEqual(report["collection_movie_count"], 1)
+        self.assertEqual(len(self.server.remote_searches), 1)
+        self.assertFalse(self.server.mutations)
+
     def test_existing_unmanaged_collection_not_adopted(self):
         self.server.collections[C] = {"name": self.cfg.collection_name, "items": [B]}
         with self.feed(), self.assertRaisesRegex(ExtensionError, "existe déjà"):
@@ -507,6 +546,58 @@ class IntegrationTests(unittest.TestCase):
         with self.assertRaisesRegex(ExtensionError, "redirige"):
             Jellyfin(self.cfg).movies()
         self.assertEqual(len(self.server.requests), 1)
+
+
+class MetadataLookupTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory(dir=TEMP_ROOT)
+        self.addCleanup(self.temporary.cleanup)
+        self.cfg = config(Path(self.temporary.name), metadata_lookup=True)
+        self.matcher = Matcher([movie(title="Original", ProviderIds={"Tmdb":"42"})])
+        self.client = Mock()
+        self.client.search_movie.return_value = [{"Name":"Titre TV", "ProductionYear":2001, "ProviderIds":{"Tmdb":"42"}}]
+
+    def lookup(self, now=NOW):
+        return MetadataLookup(self.cfg, self.client, self.matcher, now)
+
+    def test_missing_year_rejects_remote_remakes_even_if_only_one_is_owned(self):
+        self.client.search_movie.return_value += [{"Name":"Titre TV", "ProductionYear":2020, "ProviderIds":{"Tmdb":"99"}}]
+        self.assertEqual(self.lookup().match(programme("Titre TV", year=None)), (None, "métadonnées ambiguës"))
+        match, _ = self.lookup().match(programme("Titre TV", year=2001))
+        self.assertEqual(match.movie["Id"], A)
+
+    def test_similar_titles_and_wrong_year_are_not_selected(self):
+        self.assertIsNone(self.lookup().match(programme("Titre TV 2"))[0])
+        self.assertIsNone(self.lookup().match(programme("Titre TV", year=1999))[0])
+
+    def test_identified_film_must_exist_in_the_library(self):
+        self.client.search_movie.return_value[0]["ProviderIds"] = {"Tmdb":"99"}
+        self.assertEqual(self.lookup().match(programme("Titre TV")), (None, "identifiant absent"))
+
+    def test_conflicting_identifiers_are_rejected(self):
+        self.client.search_movie.return_value = [
+            {"Name":"Titre TV", "ProductionYear":2001, "ProviderIds":{"Tmdb":"42", "Imdb":"tt1234567"}},
+            {"Name":"Titre TV", "ProductionYear":2001, "ProviderIds":{"Tmdb":"42", "Imdb":"tt7654321"}},
+        ]
+        self.assertIsNone(self.lookup().match(programme("Titre TV"))[0])
+
+    def test_cache_avoids_repeating_searches_and_has_a_bounded_fallback(self):
+        self.assertIsNotNone(self.lookup().match(programme("Titre TV"))[0])
+        second = self.lookup()
+        self.assertIsNotNone(second.match(programme("Titre TV"))[0])
+        self.assertEqual(self.client.search_movie.call_count, 1)
+        self.assertEqual(second.cache_hits, 1)
+        self.client.search_movie.side_effect = ExtensionError("offline")
+        fallback = self.lookup(NOW + timedelta(days=2))
+        with self.assertLogs(level="WARNING"):
+            self.assertIsNotNone(fallback.match(programme("Titre TV"))[0])
+        self.assertTrue(fallback.used_fallback)
+        with self.assertRaisesRegex(ExtensionError, "collection conservée"):
+            self.lookup(NOW + timedelta(days=8)).match(programme("Titre TV"))
+
+    def test_large_unqualified_result_set_is_not_assumed_unambiguous(self):
+        self.client.search_movie.return_value += [{"Name":f"Autre film {i}", "ProviderIds":{"Tmdb":str(100+i)}} for i in range(19)]
+        self.assertIsNone(self.lookup().match(programme("Titre TV", year=None))[0])
 
 
 class ConfigAndLockTests(unittest.TestCase):

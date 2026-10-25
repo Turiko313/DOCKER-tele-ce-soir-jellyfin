@@ -14,6 +14,7 @@ from .guide import GuideCache
 from .jellyfin import Jellyfin
 from .matching import Matcher
 from .locking import instance_lock
+from .lookup import MetadataLookup
 from .reporting import log_report, log_startup, read_report
 
 LOG = logging.getLogger(__name__)
@@ -27,9 +28,12 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None,
     server_id, version = client.server_identity()
     movies = client.movies()
     matcher = Matcher(movies, config.title_overrides)
+    lookup = MetadataLookup(config, client, matcher, now) if config.metadata_lookup else None
     matches, skipped = [], []
     for programme in guide.movies:
         match, reason = matcher.match(programme)
+        if not match and reason == "absent" and not programme.provider_ids and lookup:
+            match, reason = lookup.match(programme)
         if match:
             matches.append(match)
         else:
@@ -48,6 +52,10 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None,
         "jellyfin_version": version,
         "dry_run": dry_run,
         "cached_guide_fallback": used_fallback,
+        "metadata_lookup_enabled": bool(lookup),
+        "metadata_lookup_requests": lookup.requests if lookup else 0,
+        "metadata_lookup_cache_hits": lookup.cache_hits if lookup else 0,
+        "cached_metadata_fallback": lookup.used_fallback if lookup else False,
         "library_movie_count": len(matcher.movies),
         "guide_movie_count": len(guide.movies),
         "covered_channel_count": len(guide.covered_channels),
