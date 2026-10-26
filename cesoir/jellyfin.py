@@ -82,7 +82,7 @@ class Jellyfin:
         raise ExtensionError("La pagination Jellyfin a dépassé la limite de sécurité.")
 
     def movies(self) -> list[dict]:
-        movies = self.items(IncludeItemTypes="Movie", Recursive="true", CollapseBoxSetItems="false", IsPlaceHolder="false", ExcludeLocationTypes="Virtual", Fields="OriginalTitle,ProviderIds", SortBy="SortName", SortOrder="Ascending")
+        movies = self.items(IncludeItemTypes="Movie", Recursive="true", CollapseBoxSetItems="false", IsPlaceHolder="false", ExcludeLocationTypes="Virtual", Fields="OriginalTitle,ProviderIds,Path,People", SortBy="SortName", SortOrder="Ascending")
         if not movies:
             raise ExtensionError("Aucun film trouvé dans Jellyfin. Vérifie la médiathèque et l'adresse du serveur.")
         return movies
@@ -93,8 +93,8 @@ class Jellyfin:
             raise ExtensionError("Impossible d'identifier le serveur Jellyfin.")
         return str(info["Id"]), str(info.get("Version", "inconnue"))
 
-    def search_movie(self, title: str, year: int | None) -> list[dict]:
-        info = {"Name": title, "MetadataLanguage": "fr", "MetadataCountryCode": "FR"}
+    def search_movie(self, title: str, year: int | None, *, language: str = "fr") -> list[dict]:
+        info = {"Name": title, "MetadataLanguage": language, "MetadataCountryCode": "FR"}
         if year is not None:
             info["Year"] = year
         # This endpoint only searches metadata; never call RemoteSearch/Apply.

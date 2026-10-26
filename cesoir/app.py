@@ -32,14 +32,21 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None,
     matches, skipped = [], []
     for programme in guide.movies:
         match, reason = matcher.match(programme)
-        if not match and reason == "absent" and not programme.provider_ids and lookup:
+        if not match and reason in {"absent", "titre ambigu", "année différente"} and not programme.provider_ids and lookup:
             match, reason = lookup.match(programme)
+        if not match and reason in {"absent", "métadonnées non concluantes"} and config.approximate_matching:
+            approximate, approximate_reason = matcher.match_approximate(programme)
+            if approximate:
+                match, reason = approximate, ""
+            elif approximate_reason == "titre ambigu":
+                reason = approximate_reason
         if match:
             matches.append(match)
         else:
             skipped.append({"title": programme.title, "channel": programme.channel_name, "reason": reason,
                             "channel_id": programme.channel_id, "year": programme.year,
-                            "start": programme.start.astimezone(start.tzinfo).isoformat()})
+                            "start": programme.start.astimezone(start.tzinfo).isoformat(),
+                            "suggestions": matcher.suggestions(programme)})
     desired = list(dict.fromkeys(m.movie["Id"] for m in matches))
     collection_id = client.collection(server_id, desired, dry_run)
     changes = client.sync(collection_id, desired, dry_run)
@@ -53,6 +60,7 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None,
         "dry_run": dry_run,
         "cached_guide_fallback": used_fallback,
         "metadata_lookup_enabled": bool(lookup),
+        "approximate_matching_enabled": config.approximate_matching,
         "metadata_lookup_requests": lookup.requests if lookup else 0,
         "metadata_lookup_cache_hits": lookup.cache_hits if lookup else 0,
         "cached_metadata_fallback": lookup.used_fallback if lookup else False,
@@ -67,7 +75,7 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None,
             {"title": m.movie["Name"], "jellyfin_id": m.movie["Id"], "tv_title": m.programme.title,
              "channel": m.programme.channel_name, "channel_id": m.programme.channel_id,
              "start": m.programme.start.astimezone(start.tzinfo).isoformat(), "match_method": m.method,
-             "year": m.movie.get("ProductionYear")}
+             "year": m.movie.get("ProductionYear"), "title_similarity": m.score}
             for m in matches
         ],
         "skipped": skipped,

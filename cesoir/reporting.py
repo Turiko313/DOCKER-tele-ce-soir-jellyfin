@@ -16,6 +16,7 @@ REASONS = {
     "année différente": "titre trouvé, mais année différente du programme TV",
     "titre ambigu": "plusieurs films possibles, sans information pour les départager",
     "identifiants différents": "titre trouvé, mais identifiants IMDb/TMDb contradictoires",
+    "réalisateur différent": "titre trouvé, mais réalisateur différent du programme TV",
     "correspondances manuelles contradictoires": "plusieurs correspondances manuelles contradictoires",
     "identifiant absent": "film identifié, mais aucun identifiant correspondant dans la médiathèque",
     "métadonnées ambiguës": "plusieurs œuvres possibles dans les métadonnées ; aucun choix automatique",
@@ -60,7 +61,7 @@ def log_report(report: dict, previous: dict, path: Path, force_details: bool = F
     LOG.info("%s — soirée du %s : %d film(s) disponible(s), %d diffusion(s) retenue(s) sur %d ; %d écartée(s) ; ajouts : %d, retraits : %d.",
              status, report["evening"], report["collection_movie_count"], report["matched_broadcast_count"],
              report["guide_movie_count"], len(report["skipped"]), changes["added"], changes["removed"])
-    keys = ("evening", "start", "end", "broadcasts", "skipped", "library_movie_count", "covered_channel_count", "cached_guide_fallback", "metadata_lookup_enabled", "cached_metadata_fallback")
+    keys = ("evening", "start", "end", "broadcasts", "skipped", "library_movie_count", "covered_channel_count", "cached_guide_fallback", "metadata_lookup_enabled", "cached_metadata_fallback", "approximate_matching_enabled")
     details = force_details or changed or report["dry_run"] or any(report.get(k) != previous.get(k) for k in keys)
     if not details:
         return
@@ -74,9 +75,13 @@ def log_report(report: dict, previous: dict, path: Path, force_details: bool = F
         LOG.info("  RETENU | %s | %s | %s%s | %s", _schedule(broadcast["start"]), broadcast["channel"], broadcast["title"], year, broadcast["match_method"])
         if broadcast["tv_title"] != broadcast["title"]:
             LOG.info("           Titre du programme TV : %s", broadcast["tv_title"])
+        if broadcast.get("title_similarity") is not None:
+            LOG.info("           Similarité des titres : %.1f %% ; année identique vérifiée.", broadcast["title_similarity"] * 100)
     for skipped in report["skipped"]:
         year = f" ({skipped['year']})" if skipped.get("year") else ""
         LOG.info("  ÉCARTÉ | %s | %s | %s%s — %s", _schedule(skipped["start"]), skipped["channel"], skipped["title"], year, REASONS.get(skipped["reason"], skipped["reason"]))
+        for suggestion in skipped.get("suggestions", [])[:2]:
+            LOG.info("           À vérifier, non ajouté : %s (%s), similarité %.1f %%.", suggestion["title"], suggestion.get("year") or "année inconnue", suggestion["title_similarity"] * 100)
     if counts:
         LOG.info("Motifs des exclusions : %s.", "; ".join(f"{count} × {REASONS.get(reason, reason)}" for reason, count in sorted(counts.items())))
     LOG.info("Rapport complet : %s. Les prochains contrôles sans changement afficheront uniquement le bilan.", path)

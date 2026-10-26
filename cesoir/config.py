@@ -29,7 +29,7 @@ class Config:
     guide_url: str = "https://xmltvfr.fr/xmltv/xmltv_tnt.xml.gz"
     timezone: str = "Europe/Paris"
     start: str = "20:00"
-    end: str = "02:00"
+    end: str = "04:00"
     channels: tuple[str, ...] = ()
     collection_name: str = "Films à la télé ce soir"
     collection_id: str = ""
@@ -38,6 +38,7 @@ class Config:
     guide_max_age_hours: int = 48
     include_tv_movies: bool = True
     metadata_lookup: bool = True
+    approximate_matching: bool = True
     title_overrides: dict[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -51,11 +52,19 @@ class Config:
             secret_path = os.environ.get("JELLYFIN_API_KEY_FILE", "/run/secrets/jellyfin_api_key")
             raw["api_key"] = Path(secret_path).read_text(encoding="utf-8-sig").strip()
             raw["data_dir"] = Path(os.environ.get("DATA_DIR", "/data"))
+            for setting, variable in (("start", "TV_START"), ("end", "TV_END")):
+                if variable in os.environ:
+                    raw[setting] = os.environ[variable].strip()
             if "METADATA_LOOKUP" in os.environ:
                 value = os.environ["METADATA_LOOKUP"].strip().lower()
                 if value not in {"true", "false"}:
                     raise ValueError("METADATA_LOOKUP doit être true ou false")
                 raw["metadata_lookup"] = value == "true"
+            if "APPROXIMATE_MATCHING" in os.environ:
+                value = os.environ["APPROXIMATE_MATCHING"].strip().lower()
+                if value not in {"true", "false"}:
+                    raise ValueError("APPROXIMATE_MATCHING doit être true ou false")
+                raw["approximate_matching"] = value == "true"
             if "channels" in raw:
                 if not isinstance(raw["channels"], list) or not all(isinstance(c, str) for c in raw["channels"]):
                     raise ValueError("channels doit être une liste d'identifiants XMLTV")
@@ -96,6 +105,8 @@ class Config:
             raise ValueError("include_tv_movies doit être true ou false")
         if type(self.metadata_lookup) is not bool:
             raise ValueError("metadata_lookup doit être true ou false")
+        if type(self.approximate_matching) is not bool:
+            raise ValueError("approximate_matching doit être true ou false")
         if not isinstance(self.title_overrides, dict) or not all(
             isinstance(k, str) and k.strip() and isinstance(v, str) and re.fullmatch(r"[a-fA-F0-9-]{32,36}", v)
             for k, v in self.title_overrides.items()

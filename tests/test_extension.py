@@ -59,10 +59,10 @@ class TimeTests(unittest.TestCase):
         cfg = config(Path("unused"))
         start, end = evening_window(datetime(2026, 10, 26, 0, 30, tzinfo=timezone.utc), cfg)
         self.assertEqual(start.isoformat(), "2026-10-25T20:00:00+01:00")
-        self.assertEqual(end.isoformat(), "2026-10-26T02:00:00+01:00")
+        self.assertEqual(end.isoformat(), "2026-10-26T04:00:00+01:00")
 
     def test_end_switches_to_next_evening(self):
-        start, _ = evening_window(datetime(2026, 10, 26, 1, 0, tzinfo=timezone.utc), config(Path("unused")))
+        start, _ = evening_window(datetime(2026, 10, 26, 3, 0, tzinfo=timezone.utc), config(Path("unused")))
         self.assertEqual(start.date().isoformat(), "2026-10-26")
 
     def test_summer_and_winter_offsets(self):
@@ -115,8 +115,8 @@ class GuideTests(unittest.TestCase):
 
     def test_bounds_include_start_exclude_end_and_include_second_half(self):
         xml = guide_xml().decode().replace("</tv>", '''
-<programme start="20261026013000 +0100" channel="TF1.fr"><title>Suite</title><category>Film</category></programme>
-<programme start="20261026020000 +0100" channel="TF1.fr"><title>Trop tard</title><category>Film</category></programme>
+<programme start="20261026033000 +0100" channel="TF1.fr"><title>Suite</title><category>Film</category></programme>
+<programme start="20261026040000 +0100" channel="TF1.fr"><title>Trop tard</title><category>Film</category></programme>
 <programme start="20261025200000 +0100" channel="TF1.fr"><title>Début</title><category>Film</category></programme>
 </tv>''')
         guide = self.parse(xml.encode())

@@ -1,5 +1,18 @@
 # Historique des versions
 
+## 1.2.0 — 2026-10-26
+
+- Plage par défaut étendue à 20 h–4 h, avec maintien de la soirée précédente après minuit jusqu'à 4 h. Surcharge possible par `TV_START` et `TV_END` dans Compose.
+- Reconnaissance des titres avec année, mentions VF/VOST/version restaurée, chiffres romains et caractères non latins.
+- Secours par nom de fichier et année ; prise en compte des identifiants TMDb/IMDb présents dans les noms de fichiers, sans écraser les identifiants contradictoires de Jellyfin.
+- Recherche des titres alternatifs en français et anglais ; seconde recherche sans filtre d'année pour vérifier les écarts de production/sortie d'un an à l'aide des identifiants.
+- Exploitation des réalisateurs du guide et des résumés suffisamment distinctifs pour départager les homonymes ; maintien du refus lorsque plusieurs versions restent possibles.
+- Comparaison prudente des titres proches : année connue identique, similarité d'au moins 94 %, nombres de suites identiques et écart suffisant avec les autres candidats. Désactivable avec `APPROXIMATE_MATCHING=false`.
+- Suggestions de films proches dans le rapport et les journaux, explicitement non ajoutées lorsqu'elles ne remplissent pas les conditions.
+- Renforcement des contrôles d'identité : un identifiant commun ne masque plus un identifiant contradictoire chez un autre fournisseur, et une recherche de métadonnées ne se rabat plus sur un titre local en prétendant avoir confirmé un identifiant.
+- Exclusion des making-of classés seulement « cinéma / doc cinéma », conservation des films documentaires explicitement identifiés comme films.
+- Cache de recherche mis à jour pour inclure la langue et les résumés ; caches bornés des formes de titres pour éviter les calculs répétés.
+
 ## 1.1.0 — 2026-10-25
 
 - Recherche des titres TV non reconnus via les fournisseurs de métadonnées déjà configurés dans Jellyfin, sans nouvelle clé API.

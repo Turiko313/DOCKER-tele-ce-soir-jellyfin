@@ -8,7 +8,6 @@ import json
 import logging
 from pathlib import Path
 import re
-import unicodedata
 import urllib.error
 import urllib.request
 from urllib.parse import urlsplit
@@ -17,16 +16,11 @@ import zipfile
 
 from .config import Config, ExtensionError, atomic_json
 from . import __version__
+from .titles import normalize, title_year
 
 LOG = logging.getLogger(__name__)
 MAX_DOWNLOAD = 24 * 1024 * 1024
 MAX_XML = 128 * 1024 * 1024
-
-
-def normalize(value: str) -> str:
-    value = value.replace("œ", "oe").replace("Œ", "OE").replace("æ", "ae")
-    value = "".join(c for c in unicodedata.normalize("NFKD", value.casefold()) if not unicodedata.combining(c))
-    return " ".join(re.findall(r"[a-z0-9]+", value))
 
 
 @dataclass(frozen=True)
@@ -38,6 +32,8 @@ class Programme:
     start: datetime
     year: int | None
     provider_ids: dict[str, str]
+    description: str = ""
+    directors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -66,8 +62,8 @@ def xmltv_datetime(value: str) -> datetime:
 
 def _provider_ids(element: ET.Element) -> dict[str, str]:
     result: dict[str, str] = {}
-    for node in element.findall("url") + element.findall("episode-num"):
-        value = (node.text or "").strip()
+    for node in element.findall("url") + element.findall("episode-num") + element.findall("uniqueid"):
+        value = (node.text or node.get("href") or "").strip().lower()
         system = (node.get("system") or "").lower()
         imdb = re.search(r"(?:imdb\.com/title/|^)(tt\d{5,12})(?:/|$|\?)", value)
         if imdb and ("imdb" in system or "imdb.com/title/" in value):
@@ -82,13 +78,18 @@ def _provider_ids(element: ET.Element) -> dict[str, str]:
 
 def _is_movie(element: ET.Element, include_tv_movies: bool) -> bool:
     categories = [normalize(c.text or "") for c in element.findall("category")]
-    if any(re.match(r"^(serie|series|tv series|magazine|documentaire|documentary|journal|sport|emission)\b", c) for c in categories):
+    if any(re.match(r"^(serie|series|tv series|magazine|journal|sport|emission)\b", c) for c in categories):
         return False
     if any((e.get("system") or "").lower() in {"xmltv_ns", "onscreen"} or ((e.get("system") or "").lower() == "dd_progid" and (e.text or "").startswith("EP")) for e in element.findall("episode-num")):
         return False
-    patterns = r"^(film|cinema|movie|movies|feature film)\b"
+    explicit_film = any(re.match(r"^(film|movie|movies|feature film)\b", c) for c in categories)
+    if not explicit_film and any(re.match(r"^(documentaire|documentary|doc|making of|bande annonce|trailer)\b", c) for c in categories):
+        return False
+    if not include_tv_movies and any(re.match(r"^(telefilm|tv movie)\b", c) for c in categories):
+        return False
+    patterns = r"^(film|cinema|movie|movies|feature film|court metrage|long metrage)\b"
     if include_tv_movies:
-        patterns = r"^(film|telefilm|cinema|movie|movies|feature film|tv movie)\b"
+        patterns = r"^(film|telefilm|cinema|movie|movies|feature film|tv movie|court metrage|long metrage)\b"
     return any(re.match(patterns, c) for c in categories)
 
 
@@ -128,8 +129,10 @@ def parse_guide(path: Path, config: Config, start: datetime, end: datetime) -> G
                                 if titles and _is_movie(node, config.include_tv_movies):
                                     french = next((t.text.strip() for t in node.findall("title") if (t.get("lang") or "").startswith("fr") and t.text and t.text.strip()), titles[0])
                                     year_text = node.findtext("date") or ""
-                                    year = int(year_text[:4]) if re.match(r"\d{4}", year_text) else None
-                                    movies.append(Programme(french, titles, channel_id, channels.get(channel_id, channel_id), stamp, year, _provider_ids(node)))
+                                    year = int(year_text[:4]) if re.match(r"(?:18|19|20)\d{2}", year_text) else title_year(french)
+                                    description = next((d.text.strip() for d in node.findall("desc") if (d.get("lang") or "fr").startswith("fr") and d.text), node.findtext("desc") or "")
+                                    directors = tuple(d.text.strip() for d in node.findall("credits/director") if d.text and d.text.strip())
+                                    movies.append(Programme(french, titles, channel_id, channels.get(channel_id, channel_id), stamp, year, _provider_ids(node), description, directors))
                     root.remove(node)
     except (ET.ParseError, OSError, StopIteration) as error:
         raise ExtensionError(f"Guide XMLTV illisible : {error}") from None

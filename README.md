@@ -12,12 +12,13 @@ Elle tourne dans un conteneur Docker supplémentaire sur le NAS et utilise l'API
 ## Fonctionnement par défaut
 
 - Programme du [guide TNT de XML TV Fr](https://xmltvfr.fr/xmltv.php), sans clé de fournisseur TV.
-- Films et téléfilms dont la diffusion commence entre **20 h et 2 h**, heure de Paris.
+- Films et téléfilms dont la diffusion commence entre **20 h et 4 h**, heure de Paris.
 - Mise à jour toutes les **15 minutes** ; rafraîchissement du programme toutes les **12 heures** en fonctionnement normal.
-- Après minuit, conservation de la soirée précédente jusqu'à 2 h.
+- Après minuit, conservation de la soirée précédente jusqu'à 4 h.
 - Affichage des seuls films déjà présents dans la médiathèque ; aucun téléchargement de films.
 - Correspondances par IMDb/TMDb, ou par titre normalisé et année lorsque les données sont disponibles. Les homonymes ambigus sont écartés.
 - Recherche complémentaire des traductions via les métadonnées de Jellyfin si aucun titre local ne correspond ; le résultat doit fournir un identifiant TMDb/IMDb déjà présent dans la médiathèque.
+- Reconnaissance des variantes de titres et des noms de fichiers ; titres très proches acceptés avec une année identique et des contrôles de suites et d'homonymes.
 - Images Docker pour **Linux AMD64 et ARM64**, construites automatiquement après réussite des tests.
 
 ## Installation Docker sur le NAS
@@ -103,12 +104,12 @@ ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:latest
 | Étiquette | Contenu |
 | --- | --- |
 | `latest` | Dernière version stable publiée. |
-| `1.1.0` | Version précise, à utiliser pour figer une installation. |
-| `1.1`, `1` | Dernière version publiée dans cette branche de versions. |
+| `1.2.0` | Version précise, à utiliser pour figer une installation. |
+| `1.2`, `1` | Dernière version publiée dans cette branche de versions. |
 | `edge` | Dernier commit de `main` ayant passé les tests. |
 | `sha-…` | Image associée à un commit précis. |
 
-Pour figer une version, indique par exemple `CESOIR_VERSION=1.1.0` dans `.env`. Pour appliquer une nouvelle image :
+Pour figer une version, indique par exemple `CESOIR_VERSION=1.2.0` dans `.env`. Pour appliquer une nouvelle image :
 
 ```sh
 docker compose pull
@@ -123,11 +124,12 @@ Modifie `config.json`, puis redémarre le conteneur avec `docker compose restart
 
 | Réglage | Rôle |
 | --- | --- |
-| `start`, `end` | Plage de début des diffusions, par défaut `"20:00"` à `"02:00"`. |
+| `start`, `end` | Plage de début des diffusions, par défaut `"20:00"` à `"04:00"`. Les variables Docker `TV_START` et `TV_END` sont prioritaires sur le fichier. |
 | `timezone` | Fuseau horaire, `"Europe/Paris"` par défaut. |
 | `channels` | `[]` prend toutes les chaînes du fichier choisi ; une liste limite la sélection. |
 | `include_tv_movies` | `true` inclut les téléfilms ; `false` les écarte. |
 | `metadata_lookup` | `true` recherche aussi les traductions via les fournisseurs de métadonnées Jellyfin. `METADATA_LOOKUP=false` dans l'environnement Docker désactive cette étape, même sans fichier de configuration monté. |
+| `approximate_matching` | `true` permet les variantes ou fautes légères avec une année connue identique et des contrôles supplémentaires. `APPROXIMATE_MATCHING=false` désactive ce rapprochement automatique. |
 | `collection_name` | Nom de la collection ; s'il est modifié, ajuste aussi le nom de la collection existante dans Jellyfin. |
 | `collection_id` | Facultatif : identifiant d'une collection existante dont tu confies explicitement tout le contenu à l'extension. |
 | `interval_seconds` | Intervalle de vérification, 900 secondes par défaut, au minimum 60. |
@@ -146,13 +148,23 @@ Consulte la [liste des chaînes du guide TNT](https://xmltvfr.fr/channels.php?gu
 
 ### Retrouver les traductions et corriger un titre non reconnu
 
-L'extension cherche d'abord le titre français ou original après normalisation des accents, de la casse et de la ponctuation, ou les identifiants fournis dans le guide.
+Depuis la version 1.2.0, la reconnaissance combine plusieurs niveaux de preuves :
 
-Depuis la version 1.1.0, si aucun titre local ne correspond et que le guide ne fournit pas déjà d'identifiant, elle consulte la recherche des fournisseurs activés dans Jellyfin, par exemple TMDb. Le titre TV est transmis via Jellyfin à ces fournisseurs. Cela utilise la [recherche de métadonnées Jellyfin](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/ItemLookupController.cs), sans nouvelle clé ni extension à installer.
+1. Correspondances manuelles, puis identifiants IMDb/TMDb du guide et de la médiathèque. Les identifiants présents dans un nom de fichier standard, comme `[tmdbid-123]`, peuvent compléter une fiche incomplète ; une contradiction avec la fiche n'est pas écrasée.
+2. Titres français et originaux, normalisés sans perdre les caractères non latins. Les mentions de diffusion comme `(VF)`, `(version restaurée)` et les années entre parenthèses sont distinguées du titre. Les chiffres romains des suites sont rapprochés des chiffres arabes.
+3. Nom de fichier, si son année concorde avec celle du guide et ne contredit pas la fiche. Un nom comme `Film (2025) [tmdbid-123].mkv` ou `Film.2025.1080p.BluRay.mkv` peut ainsi aider lorsque le nom affiché est incorrect.
+4. Recherche des titres et de leurs variantes en français et anglais via les fournisseurs de métadonnées déjà configurés dans Jellyfin, par exemple TMDb. Les titres TV sont transmis via Jellyfin à ces fournisseurs. Cela utilise la [recherche de métadonnées Jellyfin](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/ItemLookupController.cs), sans nouvelle clé ni extension à installer, et sans appliquer de métadonnées aux films.
+5. En dernier recours, titres très proches ou différences d'article : année connue et identique, similarité d'au moins 94 %, numéros de suites identiques, titres suffisamment longs en cas de faute, et absence d'un autre candidat trop proche. Les titres courts, les remakes sans année et les suites différentes ne sont pas ajoutés par ce mécanisme.
 
-Un résultat doit porter exactement le titre recherché après normalisation, respecter l'année lorsqu'elle figure dans le guide, être non ambigu et fournir un identifiant TMDb/IMDb qui existe dans le catalogue local. Une traduction peut ainsi conduire au bon film, même si son nom dans Jellyfin diffère. Si plusieurs œuvres portent ce nom, l'extension ne choisit pas arbitrairement la première. Une recherche sans année renvoyant au moins vingt résultats est également considérée comme insuffisante. Elle n'ajoute jamais un film absent du catalogue et ne modifie pas les fiches existantes.
+La recherche de métadonnées doit confirmer un identifiant présent dans le catalogue. Elle peut accepter un écart de production/sortie d'un an lorsque l'œuvre est identifiée sans ambiguïté. Elle peut aussi exploiter un réalisateur indiqué dans le guide ou un synopsis suffisamment distinctif : au moins cinq mots informatifs communs, couverture d'au moins 45 % des mots informatifs du synopsis TV et avance d'au moins 18 points sur le résultat suivant. Des résumés très proches de remakes restent ambigus. Une recherche sans année renvoyant au moins vingt résultats nécessite ces éléments supplémentaires pour départager les œuvres.
+
+L'extension n'ajoute que des entrées de films déjà présentes dans le catalogue Jellyfin. Elle ne vérifie pas les octets des vidéos et ne modifie pas leurs fiches. Les rapprochements de titres restent des heuristiques : ils réduisent les oublis sans garantir une reconnaissance parfaite. La méthode et, le cas échéant, le score de similarité sont indiqués dans le rapport.
 
 Les recherches sont mises en cache pendant 24 heures, jusqu'à 500 entrées. Si l'API de recherche échoue, un cache de moins de sept jours peut servir de secours ; à défaut, la synchronisation échoue et la collection précédente est conservée. Si le fournisseur renvoie des résultats vides ou ambigus, les diffusions concernées sont écartées normalement. Pour revenir aux seules correspondances locales, définis `METADATA_LOOKUP: "false"` dans `environment` de ton Compose OMV, ou `"metadata_lookup": false` dans `config.json`.
+
+Pour désactiver également les titres proches automatiques, ajoute `APPROXIMATE_MATCHING: "false"`. Les suggestions restent consultables dans `report.json` et ne sont jamais ajoutées simplement parce qu'elles apparaissent parmi les suggestions.
+
+**Passage de 2 h à 4 h :** si le conteneur utilise la configuration intégrée à l'image, la nouvelle plage s'applique après sa mise à jour. Si un ancien `config.json` est monté dans Docker, remplace `"end": "02:00"` par `"end": "04:00"`, ou ajoute `TV_END: "04:00"` dans `environment` de ton Compose OMV. Cela permet de modifier la plage sans réécrire le fichier monté.
 
 Une traduction différente peut être associée manuellement à un film :
 
@@ -198,7 +210,7 @@ Collection inchangée — soirée du 2026-10-25 : 4 film(s) disponible(s), 4 dif
 
 Le nombre de films est distinct de celui des diffusions : un même film peut passer sur plusieurs chaînes ou à plusieurs horaires. Les dates évitent les confusions après minuit. Les détails complets s'affichent au démarrage, en simulation ou lorsque le résultat change ; les contrôles suivants conservent un bilan compact. Le rapport JSON complet reste actualisé à chaque passage réussi.
 
-Depuis la version 1.1.0, le rapport indique aussi le nombre de recherches de traductions, les résultats servis depuis le cache et la méthode utilisée pour chaque film retenu. Les exclusions distinguent les films identifiés sans identifiant correspondant dans la médiathèque, les recherches sans résultat exact et les homonymes non départagés. Ces diagnostics ne garantissent pas qu'un fichier ne soit pas présent sous une fiche mal identifiée.
+Le rapport indique aussi le nombre de recherches de traductions, les résultats servis depuis le cache, la méthode utilisée pour chaque film retenu et les suggestions non ajoutées pour les exclusions. Les exclusions distinguent les films identifiés sans identifiant correspondant dans la médiathèque, les recherches sans résultat concluant et les homonymes non départagés. Ces diagnostics ne garantissent pas qu'un fichier ne soit pas présent sous une fiche mal identifiée.
 
 La ligne de version annonce un lancement du programme, pas un contrôle périodique. Deux lignes de démarrage espacées de quelques secondes signalent donc deux lancements (redéploiement OMV, mise à jour Watchtower, commande manuelle, etc.). Un démarrage continu détecté moins de deux minutes après le précédent est explicitement signalé lorsque le même volume `/data` est conservé. Le contrôle de santé Docker ne produit pas cette annonce.
 
@@ -244,11 +256,11 @@ Le workflow [Tests, Docker et versions](.github/workflows/docker.yml) :
 
 Les pull requests exécutent les tests sans publier d'image. La publication utilise le `GITHUB_TOKEN` temporaire de GitHub Actions ; aucun secret personnel du NAS n'est nécessaire.
 
-Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.1.1` :
+Pour préparer une nouvelle version : mets à jour `cesoir/__init__.py` et `CHANGELOG.md`, committe, puis pousse le commit et son tag correspondant. Exemple après passage du code en `1.2.1` :
 
 ```sh
-git tag -a v1.1.1 -m "Version 1.1.1"
-git push origin main v1.1.1
+git tag -a v1.2.1 -m "Version 1.2.1"
+git push origin main v1.2.1
 ```
 
 ## Validation et limites
