@@ -10,14 +10,34 @@ import sys
 import threading
 
 from .config import Config, ExtensionError, atomic_json, evening_window
-from .guide import GuideCache
+from .guide import GuideCache, Programme
 from .jellyfin import Jellyfin
-from .matching import Matcher
+from .matching import Match, Matcher
 from .locking import instance_lock
 from .lookup import MetadataLookup
 from .reporting import log_report, log_startup, read_report
 
 LOG = logging.getLogger(__name__)
+
+
+def resolve_programme(programme: Programme, matcher: Matcher, lookup: MetadataLookup | None, approximate_matching: bool = True) -> tuple[Match | None, str]:
+    match, reason = matcher.match(programme)
+    if reason in {"correspondances manuelles contradictoires", "identifiants différents", "réalisateur différent"}:
+        return match, reason
+    unverified_genre = programme.genre_only and not programme.year and not programme.provider_ids
+    if unverified_genre and (not match or match.method != "manuel"):
+        # A unique owned title is not a unique work globally (e.g. Addams 1991
+        # versus the owned 2019 animation). Confirm the work before ownership.
+        return lookup.match(programme) if lookup else (None, "identité à confirmer")
+    if not match and reason in {"absent", "titre ambigu", "année différente"} and not programme.provider_ids and lookup:
+        match, reason = lookup.match(programme)
+    if not match and reason in {"absent", "métadonnées non concluantes"} and approximate_matching:
+        approximate, approximate_reason = matcher.match_approximate(programme)
+        if approximate:
+            match, reason = approximate, ""
+        elif approximate_reason == "titre ambigu":
+            reason = approximate_reason
+    return match, reason
 
 
 def run_once(config: Config, dry_run: bool = False, now: datetime | None = None, *, force_details: bool = False) -> dict:
@@ -31,20 +51,12 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None,
     lookup = MetadataLookup(config, client, matcher, now) if config.metadata_lookup else None
     matches, skipped = [], []
     for programme in guide.movies:
-        match, reason = matcher.match(programme)
-        if not match and reason in {"absent", "titre ambigu", "année différente"} and not programme.provider_ids and lookup:
-            match, reason = lookup.match(programme)
-        if not match and reason in {"absent", "métadonnées non concluantes"} and config.approximate_matching:
-            approximate, approximate_reason = matcher.match_approximate(programme)
-            if approximate:
-                match, reason = approximate, ""
-            elif approximate_reason == "titre ambigu":
-                reason = approximate_reason
+        match, reason = resolve_programme(programme, matcher, lookup, config.approximate_matching)
         if match:
             matches.append(match)
         else:
             skipped.append({"title": programme.title, "channel": programme.channel_name, "reason": reason,
-                            "channel_id": programme.channel_id, "year": programme.year,
+                            "channel_id": programme.channel_id, "year": programme.year, "genre_only": programme.genre_only,
                             "start": programme.start.astimezone(start.tzinfo).isoformat(),
                             "suggestions": matcher.suggestions(programme)})
     desired = list(dict.fromkeys(m.movie["Id"] for m in matches))
@@ -66,6 +78,7 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None,
         "cached_metadata_fallback": lookup.used_fallback if lookup else False,
         "library_movie_count": len(matcher.movies),
         "guide_movie_count": len(guide.movies),
+        "guide_genre_only_count": sum(p.genre_only for p in guide.movies),
         "covered_channel_count": len(guide.covered_channels),
         "collection_movie_count": len(desired),
         "matched_broadcast_count": len(matches),
@@ -75,7 +88,7 @@ def run_once(config: Config, dry_run: bool = False, now: datetime | None = None,
             {"title": m.movie["Name"], "jellyfin_id": m.movie["Id"], "tv_title": m.programme.title,
              "channel": m.programme.channel_name, "channel_id": m.programme.channel_id,
              "start": m.programme.start.astimezone(start.tzinfo).isoformat(), "match_method": m.method,
-             "year": m.movie.get("ProductionYear"), "title_similarity": m.score}
+             "year": m.movie.get("ProductionYear"), "title_similarity": m.score, "genre_only": m.programme.genre_only}
             for m in matches
         ],
         "skipped": skipped,

@@ -19,6 +19,7 @@ Elle tourne dans un conteneur Docker supplémentaire sur le NAS et utilise l'API
 - Correspondances par IMDb/TMDb, ou par titre normalisé et année lorsque les données sont disponibles. Les homonymes ambigus sont écartés.
 - Recherche complémentaire des traductions via les métadonnées de Jellyfin si aucun titre local ne correspond ; le résultat doit fournir un identifiant TMDb/IMDb déjà présent dans la médiathèque.
 - Reconnaissance des variantes de titres et des noms de fichiers ; titres très proches acceptés avec une année identique et des contrôles de suites et d'homonymes.
+- Films également détectés avec un genre seul (« Comédie », « Drame », « Western »…). Sans année ni identifiant, ces nouveaux candidats passent par une vérification d'identité via les métadonnées de Jellyfin avant ajout.
 - Images Docker pour **Linux AMD64 et ARM64**, construites automatiquement après réussite des tests.
 
 ## Installation Docker sur le NAS
@@ -104,12 +105,12 @@ ghcr.io/turiko313/docker-tele-ce-soir-jellyfin:latest
 | Étiquette | Contenu |
 | --- | --- |
 | `latest` | Dernière version stable publiée. |
-| `1.2.0` | Version précise, à utiliser pour figer une installation. |
+| `1.3.0` | Version précise, à utiliser pour figer une installation. |
 | `1.2`, `1` | Dernière version publiée dans cette branche de versions. |
 | `edge` | Dernier commit de `main` ayant passé les tests. |
 | `sha-…` | Image associée à un commit précis. |
 
-Pour figer une version, indique par exemple `CESOIR_VERSION=1.2.0` dans `.env`. Pour appliquer une nouvelle image :
+Pour figer une version, indique par exemple `CESOIR_VERSION=1.3.0` dans `.env`. Pour appliquer une nouvelle image :
 
 ```sh
 docker compose pull
@@ -148,10 +149,10 @@ Consulte la [liste des chaînes du guide TNT](https://xmltvfr.fr/channels.php?gu
 
 ### Retrouver les traductions et corriger un titre non reconnu
 
-Depuis la version 1.2.0, la reconnaissance combine plusieurs niveaux de preuves :
+La reconnaissance combine plusieurs niveaux de preuves :
 
 1. Correspondances manuelles, puis identifiants IMDb/TMDb du guide et de la médiathèque. Les identifiants présents dans un nom de fichier standard, comme `[tmdbid-123]`, peuvent compléter une fiche incomplète ; une contradiction avec la fiche n'est pas écrasée.
-2. Titres français et originaux, normalisés sans perdre les caractères non latins. Les mentions de diffusion comme `(VF)`, `(version restaurée)` et les années entre parenthèses sont distinguées du titre. Les chiffres romains des suites sont rapprochés des chiffres arabes.
+2. Titres français et originaux, normalisés sans perdre les caractères non latins. Les mentions de diffusion comme `(VF)`, `(version restaurée)` et les années entre parenthèses sont distinguées du titre. Les chiffres romains des suites sont rapprochés des chiffres arabes, et les ordinaux `1re / 1ère partie` sont reconnus sans confondre les parties différentes.
 3. Nom de fichier, si son année concorde avec celle du guide et ne contredit pas la fiche. Un nom comme `Film (2025) [tmdbid-123].mkv` ou `Film.2025.1080p.BluRay.mkv` peut ainsi aider lorsque le nom affiché est incorrect.
 4. Recherche des titres et de leurs variantes en français et anglais via les fournisseurs de métadonnées déjà configurés dans Jellyfin, par exemple TMDb. Les titres TV sont transmis via Jellyfin à ces fournisseurs. Cela utilise la [recherche de métadonnées Jellyfin](https://github.com/jellyfin/jellyfin/blob/master/Jellyfin.Api/Controllers/ItemLookupController.cs), sans nouvelle clé ni extension à installer, et sans appliquer de métadonnées aux films.
 5. En dernier recours, titres très proches ou différences d'article : année connue et identique, similarité d'au moins 94 %, numéros de suites identiques, titres suffisamment longs en cas de faute, et absence d'un autre candidat trop proche. Les titres courts, les remakes sans année et les suites différentes ne sont pas ajoutés par ce mécanisme.
@@ -163,6 +164,12 @@ L'extension n'ajoute que des entrées de films déjà présentes dans le catalog
 Les recherches sont mises en cache pendant 24 heures, jusqu'à 500 entrées. Si l'API de recherche échoue, un cache de moins de sept jours peut servir de secours ; à défaut, la synchronisation échoue et la collection précédente est conservée. Si le fournisseur renvoie des résultats vides ou ambigus, les diffusions concernées sont écartées normalement. Pour revenir aux seules correspondances locales, définis `METADATA_LOOKUP: "false"` dans `environment` de ton Compose OMV, ou `"metadata_lookup": false` dans `config.json`.
 
 Pour désactiver également les titres proches automatiques, ajoute `APPROXIMATE_MATCHING: "false"`. Les suggestions restent consultables dans `report.json` et ne sont jamais ajoutées simplement parce qu'elles apparaissent parmi les suggestions.
+
+Depuis la version **1.3.0**, les alias bilingues comme `L'Intermédiaire (Relay)` servent aussi aux recherches. Le titre français et le titre original doivent être reliés à la même œuvre ; enlever arbitrairement un sous-titre ne suffit pas. Les résultats TMDb et IMDb peuvent être rapprochés via les paires d'identifiants cohérentes des fiches Jellyfin.
+
+Les genres seuls (« Comédie », « Drame », etc.) sont désormais des candidats. Lorsqu'ils ne fournissent ni année ni identifiant, une vérification distante évite de remplacer, par exemple, un film de 1991 absent par son remake de 2019 présent. Si `METADATA_LOOKUP=false`, ils sont écartés avec le motif **identité à confirmer** ; une correspondance manuelle dans `title_overrides` reste possible. Les titres sans année recherchés dans les métadonnées sont vérifiés sur l'ensemble des résultats français et anglais avant sélection.
+
+Le guide XMLTVFR reste la source de grille par défaut. Les autres flux évalués n'ont pas apporté d'enrichissement fiable dans l'échantillon ; aucun flux n'est ajouté automatiquement. Un guide sans catégorie de programme est refusé, avec conservation de la collection et utilisation du cache valide si possible. Les résultats et limites de la relecture des cinq soirées figurent dans la [validation de la version 1.3.0](docs/validation-1.3.0.md).
 
 **Passage de 2 h à 4 h :** si le conteneur utilise la configuration intégrée à l'image, la nouvelle plage s'applique après sa mise à jour. Si un ancien `config.json` est monté dans Docker, remplace `"end": "02:00"` par `"end": "04:00"`, ou ajoute `TV_END: "04:00"` dans `environment` de ton Compose OMV. Cela permet de modifier la plage sans réécrire le fichier monté.
 

@@ -1,5 +1,17 @@
 # Historique des versions
 
+## 1.3.0 — 2026-10-27
+
+- Détection des films classés seulement « Comédie », « Drame », « Comédie dramatique », « Western » et autres genres de cinéma ; maintien de l'exclusion des séries, documentaires et spectacles.
+- Vérification d'identité via les métadonnées pour ces nouveaux genres lorsque l'année et les identifiants manquent, même si un seul titre identique est possédé. Une version absente n'est pas remplacée par un remake présent ; les correspondances manuelles restent prioritaires.
+- Reconnaissance des variantes françaises d'ordinaux (`1re` / `1ère partie`), avec conservation des numéros de parties et de suites.
+- Recherche des alias bilingues entre parenthèses, comme `L'Intermédiaire (Relay)` : les deux noms doivent désigner la même œuvre. Le titre original de la fiche locale peut compléter un résultat distant incomplet uniquement via un identifiant confirmé et une année compatible.
+- Rapprochement des résultats TMDb et IMDb par les paires d'identifiants cohérentes déjà connues de Jellyfin, sans fusionner des œuvres sur leur seul titre ou leur année.
+- Vérification de tous les lots de recherche d'un titre sans année avant de conclure ; prise en compte des synopsis courts suffisamment distinctifs pour départager les homonymes.
+- Refus d'un guide dépourvu de catégories pour éviter de vider la collection sur un flux incompatible ; recours au guide en cache valide lorsqu'il existe.
+- Rapport et journaux indiquant les candidats détectés par leur genre et les identités à confirmer lorsque la recherche de métadonnées est désactivée.
+- Cas de régression issus de l'audit sur cinq soirées ; validation complémentaire des captures, documentée dans `docs/validation-1.3.0.md`. Aucun nouveau fournisseur de grille activé.
+
 ## 1.2.0 — 2026-10-26
 
 - Plage par défaut étendue à 20 h–4 h, avec maintien de la soirée précédente après minuit jusqu'à 4 h. Surcharge possible par `TV_START` et `TV_END` dans Compose.

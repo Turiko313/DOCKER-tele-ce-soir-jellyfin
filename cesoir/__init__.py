@@ -1,3 +1,3 @@
 """Films à la télé ce soir — extension Docker pour Jellyfin."""
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"

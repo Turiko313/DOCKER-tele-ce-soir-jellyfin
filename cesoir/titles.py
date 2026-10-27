@@ -36,9 +36,28 @@ def title_year(value: str) -> int | None:
     return int(found[1]) if found else None
 
 
+def _ordinals(value: str) -> str:
+    return re.sub(r"\b(\d+)(?:ere|re|er|ieme|eme|e)(?=\s+(?:partie|chapitre|volet|episode)\b)", r"\1", value)
+
+
+@lru_cache(maxsize=16384)
+def title_alias_pair(value: str) -> tuple[str, str] | None:
+    """Return possible bilingual names for lookup, never strip a subtitle blindly."""
+    found = re.fullmatch(r"(.+?)\s*\(([^()]+)\)", clean_title(value))
+    if not found:
+        return None
+    pair = tuple(t.strip() for t in found.groups())
+    if any(len(normalize(t)) < 4 or not any(c.isalpha() for c in t) for t in pair):
+        return None
+    if re.fullmatch(LABEL, pair[1], flags=re.I) or number_signature(pair[0]) != number_signature(pair[1]):
+        return None
+    return pair
+
+
 @lru_cache(maxsize=32768)
 def title_forms(value: str, *, relaxed: bool = False) -> frozenset[str]:
     forms = {normalize(value), normalize(clean_title(value))} - {""}
+    forms.update(_ordinals(f) for f in list(forms))
     for form in list(forms):
         words = form.split()
         if len(words) > 1:
@@ -57,7 +76,7 @@ def title_forms(value: str, *, relaxed: bool = False) -> frozenset[str]:
 
 @lru_cache(maxsize=16384)
 def number_signature(value: str) -> tuple[str, ...]:
-    return tuple(ROMAN.get(w, w) for w in normalize(clean_title(value)).split() if w.isdecimal() or w in ROMAN)
+    return tuple(ROMAN.get(w, w) for w in _ordinals(normalize(clean_title(value))).split() if w.isdecimal() or w in ROMAN)
 
 
 def title_similarity(left: str, right: str) -> float:

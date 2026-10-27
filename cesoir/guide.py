@@ -34,6 +34,7 @@ class Programme:
     provider_ids: dict[str, str]
     description: str = ""
     directors: tuple[str, ...] = ()
+    genre_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -83,14 +84,24 @@ def _is_movie(element: ET.Element, include_tv_movies: bool) -> bool:
     if any((e.get("system") or "").lower() in {"xmltv_ns", "onscreen"} or ((e.get("system") or "").lower() == "dd_progid" and (e.text or "").startswith("EP")) for e in element.findall("episode-num")):
         return False
     explicit_film = any(re.match(r"^(film|movie|movies|feature film)\b", c) for c in categories)
-    if not explicit_film and any(re.match(r"^(documentaire|documentary|doc|making of|bande annonce|trailer)\b", c) for c in categories):
+    if not explicit_film and any(re.match(r"^(documentaire|documentary|doc|making of|bande annonce|trailer|divertissement|spectacle|theatre|ballet|opera)\b", c) for c in categories):
         return False
     if not include_tv_movies and any(re.match(r"^(telefilm|tv movie)\b", c) for c in categories):
         return False
     patterns = r"^(film|cinema|movie|movies|feature film|court metrage|long metrage)\b"
     if include_tv_movies:
         patterns = r"^(film|telefilm|cinema|movie|movies|feature film|tv movie|court metrage|long metrage)\b"
-    return any(re.match(patterns, c) for c in categories)
+    return any(re.match(patterns, c) for c in categories) or _genre_only(element)
+
+
+def _genre_only(element: ET.Element) -> bool:
+    categories = [normalize(c.text or "") for c in element.findall("category")]
+    explicit = r"^(film|telefilm|cinema|movie|movies|feature film|tv movie|court metrage|long metrage)\b"
+    if any(re.match(explicit, c) for c in categories):
+        return False
+    # Genre alone is a candidate, not proof of a film's identity. Series,
+    # documentaries and episodic programmes are rejected by _is_movie first.
+    return any(re.fullmatch(r"(?:comedie(?: dramatique| romantique| policiere| musicale| sentimentale)?|drame|western|thriller|film noir|science fiction|fantastique|horreur|epouvante|animation|action|aventure|policier|romance)", c) for c in categories)
 
 
 def parse_guide(path: Path, config: Config, start: datetime, end: datetime) -> Guide:
@@ -100,6 +111,7 @@ def parse_guide(path: Path, config: Config, start: datetime, end: datetime) -> G
     slots = 0
     selected = set(config.channels)
     bad_dates = 0
+    categorized_slots = 0
     try:
         with path.open("rb") as stream:
             iterator = ET.iterparse(stream, events=("start", "end"))
@@ -124,6 +136,7 @@ def parse_guide(path: Path, config: Config, start: datetime, end: datetime) -> G
                             # Use UTC for comparisons through clock changes.
                             if start.astimezone(timezone.utc) <= stamp < end.astimezone(timezone.utc):
                                 slots += 1
+                                categorized_slots += any((c.text or "").strip() for c in node.findall("category"))
                                 covered.add(channel_id)
                                 titles = tuple(dict.fromkeys(t.text.strip() for t in node.findall("title") if t.text and t.text.strip()))
                                 if titles and _is_movie(node, config.include_tv_movies):
@@ -132,7 +145,7 @@ def parse_guide(path: Path, config: Config, start: datetime, end: datetime) -> G
                                     year = int(year_text[:4]) if re.match(r"(?:18|19|20)\d{2}", year_text) else title_year(french)
                                     description = next((d.text.strip() for d in node.findall("desc") if (d.get("lang") or "fr").startswith("fr") and d.text), node.findtext("desc") or "")
                                     directors = tuple(d.text.strip() for d in node.findall("credits/director") if d.text and d.text.strip())
-                                    movies.append(Programme(french, titles, channel_id, channels.get(channel_id, channel_id), stamp, year, _provider_ids(node), description, directors))
+                                    movies.append(Programme(french, titles, channel_id, channels.get(channel_id, channel_id), stamp, year, _provider_ids(node), description, directors, _genre_only(node)))
                     root.remove(node)
     except (ET.ParseError, OSError, StopIteration) as error:
         raise ExtensionError(f"Guide XMLTV illisible : {error}") from None
@@ -144,6 +157,8 @@ def parse_guide(path: Path, config: Config, start: datetime, end: datetime) -> G
         raise ExtensionError("Identifiants de chaînes inconnus : " + ", ".join(sorted(missing)))
     if slots == 0:
         raise ExtensionError("Le guide ne couvre pas cette soirée. La collection est conservée sans modification.")
+    if not categorized_slots:
+        raise ExtensionError("Le guide ne fournit aucune catégorie de programme pour cette soirée ; impossible d’identifier les films. Collection conservée.")
     if selected - covered:
         raise ExtensionError("Guide incomplet pour les chaînes choisies : " + ", ".join(sorted(selected - covered)))
     movies.sort(key=lambda p: (p.start, p.channel_name, p.title))

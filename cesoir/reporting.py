@@ -21,6 +21,7 @@ REASONS = {
     "identifiant absent": "film identifié, mais aucun identifiant correspondant dans la médiathèque",
     "métadonnées ambiguës": "plusieurs œuvres possibles dans les métadonnées ; aucun choix automatique",
     "métadonnées non concluantes": "recherche de métadonnées sans résultat exact et suffisamment renseigné",
+    "identité à confirmer": "genre de film seul, sans année ni identifiant ; activer METADATA_LOOKUP pour vérifier l’œuvre",
 }
 
 
@@ -61,11 +62,13 @@ def log_report(report: dict, previous: dict, path: Path, force_details: bool = F
     LOG.info("%s — soirée du %s : %d film(s) disponible(s), %d diffusion(s) retenue(s) sur %d ; %d écartée(s) ; ajouts : %d, retraits : %d.",
              status, report["evening"], report["collection_movie_count"], report["matched_broadcast_count"],
              report["guide_movie_count"], len(report["skipped"]), changes["added"], changes["removed"])
-    keys = ("evening", "start", "end", "broadcasts", "skipped", "library_movie_count", "covered_channel_count", "cached_guide_fallback", "metadata_lookup_enabled", "cached_metadata_fallback", "approximate_matching_enabled")
+    keys = ("evening", "start", "end", "broadcasts", "skipped", "library_movie_count", "covered_channel_count", "guide_genre_only_count", "cached_guide_fallback", "metadata_lookup_enabled", "cached_metadata_fallback", "approximate_matching_enabled")
     details = force_details or changed or report["dry_run"] or any(report.get(k) != previous.get(k) for k in keys)
     if not details:
         return
     LOG.info("Médiathèque : %d film(s) disponible(s). Guide : %d chaîne(s) couverte(s). Horaires : %s.", report["library_movie_count"], report["covered_channel_count"], report["timezone"])
+    if report.get("guide_genre_only_count"):
+        LOG.info("Guide : %d candidat(s) classé(s) par genre seul (comédie, drame, etc.) ; identité vérifiée avant ajout si l’année manque.", report["guide_genre_only_count"])
     if report.get("metadata_lookup_enabled"):
         LOG.info("Recherche des traductions via Jellyfin : %d recherche(s), %d résultat(s) en cache.", report["metadata_lookup_requests"], report["metadata_lookup_cache_hits"])
     if report["cached_guide_fallback"]:

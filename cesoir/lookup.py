@@ -10,9 +10,9 @@ import re
 from .config import Config, ExtensionError, atomic_json
 from .guide import Programme
 from .jellyfin import Jellyfin
-from .matching import Match, Matcher
+from .matching import Match, Matcher, provider_ids, same_work
 from .reporting import read_report
-from .titles import clean_title, normalize, plot_similarity, title_forms, title_similarity
+from .titles import clean_title, normalize, plot_similarity, title_alias_pair, title_forms, title_similarity
 
 LOG = logging.getLogger(__name__)
 
@@ -81,6 +81,28 @@ class MetadataLookup:
         atomic_json(self.path, {"version": 2, "entries": self.entries})
         return results
 
+    def _local_evidence(self, row: dict) -> list[dict]:
+        ids = dict(row["ProviderIds"])
+        candidates = set().union(*(self.matcher.by_provider.get((p, v), set()) for p, v in ids.items()))
+        local = [self.matcher.movies[i] for i in candidates]
+        # Bridge independent TMDb/IMDb results only through an existing,
+        # consistent identity pair. Equal names/years alone cannot merge works.
+        if not local or not same_work(local):
+            return []
+        for movie in local:
+            known = provider_ids(movie)
+            if any(p in known and known[p] != v for p, v in ids.items()):
+                return []
+            if not row["ProductionYear"] or not movie.get("ProductionYear") or abs(row["ProductionYear"] - movie["ProductionYear"]) > 1:
+                return []
+        return local
+
+    def _linked_ids(self, row: dict) -> dict[str, str]:
+        ids = dict(row["ProviderIds"])
+        for movie in self._local_evidence(row):
+            ids.update({p: v for p, v in provider_ids(movie).items() if p in {"tmdb", "imdb"}})
+        return ids
+
     def _select(self, results: list[dict], programme: Programme, truncated: bool) -> tuple[Match | None, str]:
         forms = {f for t in programme.titles for f in title_forms(t, relaxed=True)}
         exact, nearby = [], []
@@ -89,7 +111,12 @@ class MetadataLookup:
             if programme.year and (not year or abs(year - programme.year) > 1):
                 continue
             names = [row["Name"], row["OriginalTitle"]]
-            if any(forms & title_forms(name, relaxed=True) for name in names if name):
+            # Jellyfin search can omit OriginalTitle; an ID-confirmed local
+            # record can supply the second bilingual name for this work.
+            compound_names = names + [name for movie in self._local_evidence(row) for name in (movie.get("Name"), movie.get("OriginalTitle")) if name]
+            compound = any(pair and all(any(title_forms(alias, relaxed=True) & title_forms(name, relaxed=True) for name in compound_names if name) for alias in pair)
+                           for pair in (title_alias_pair(t) for t in programme.titles))
+            if any(forms & title_forms(name, relaxed=True) for name in names if name) or compound:
                 exact.append(row)
             elif programme.year and year == programme.year and len(normalize(clean_title(programme.title))) >= 16:
                 score = max((title_similarity(t, name) for t in programme.titles for name in names if name), default=0.0)
@@ -102,7 +129,7 @@ class MetadataLookup:
             return None, "métadonnées non concluantes"
         groups = []
         for row in selected:
-            ids = row["ProviderIds"]
+            ids = self._linked_ids(row)
             if not ids:
                 return None, "métadonnées non concluantes"
             linked = [g for g in groups if any(g["ids"].get(p) == value for p, value in ids.items())]
@@ -126,9 +153,12 @@ class MetadataLookup:
             score, shared = max((plot_similarity(programme.description, r["Overview"]) for r in group["rows"]), default=(0.0, 0))
             plot_ranked.append((score, shared, group))
         plot_ranked.sort(key=lambda row: row[0], reverse=True)
-        if plot_ranked and plot_ranked[0][0] >= 0.45 and plot_ranked[0][1] >= 5:
+        if plot_ranked:
             runner = plot_ranked[1][0] if len(plot_ranked) > 1 else 0.0
-            if plot_ranked[0][0] - runner >= 0.18:
+            best, shared = plot_ranked[0][:2]
+            distinctive = best >= 0.45 and shared >= 5 and best - runner >= 0.18
+            short_plot = best >= 0.30 and shared >= 7 and best - runner >= 0.22
+            if distinctive or short_plot:
                 chosen = plot_ranked[0][2]
                 method = "titre + synopsis TV + identifiant"
         if chosen is None and programme.directors:
@@ -160,6 +190,8 @@ class MetadataLookup:
 
     def match(self, programme: Programme) -> tuple[Match | None, str]:
         titles = list(dict.fromkeys([clean_title(programme.title)] + [clean_title(t) for t in programme.titles]))[:3]
+        aliases = [alias for t in titles for alias in (title_alias_pair(t) or ())]
+        titles = list(dict.fromkeys(titles + aliases))[:6]
         queries = [(title, programme.year, language) for language in ("fr", "en") for title in titles if title]
         if programme.year:
             queries.extend((titles[0], None, language) for language in ("fr", "en"))
@@ -174,6 +206,8 @@ class MetadataLookup:
                     seen.add(marker)
                     results.append(row)
             match, reason = self._select(results, programme, truncated)
-            if match:
+            # A yearless title may acquire a competing remake in the next
+            # language/query. Inspect all batches before selecting its identity.
+            if match and programme.year:
                 return match, ""
-        return None, reason
+        return self._select(results, programme, truncated)
